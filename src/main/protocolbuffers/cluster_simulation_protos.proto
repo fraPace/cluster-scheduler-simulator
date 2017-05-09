@@ -24,6 +24,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+syntax = "proto2";
+
 package ClusterSchedulingSimulation;
 
 message ExperimentResultSet {
@@ -67,10 +69,10 @@ message ExperimentResultSet {
 
 
     message ExperimentResult {
-      // Track avg resource utilization attributable to tasks actually running.
-      optional double cell_state_avg_cpu_utilization = 1;
-      optional double cell_state_avg_mem_utilization = 2;
-      // Track avg resource utilization attributable to pessimistic locking
+      // Track avg resource allocation attributable to tasks actually running.
+      optional double cell_state_avg_cpu_allocation = 1;
+      optional double cell_state_avg_mem_allocation = 2;
+      // Track avg resource allocation attributable to pessimistic locking
       // while schedulers make their scheduling decisions.
       optional double cell_state_avg_cpu_locked = 3;
       optional double cell_state_avg_mem_locked = 4;
@@ -85,9 +87,16 @@ message ExperimentResultSet {
       repeated SchedulerWorkload sweep_scheduler_workload = 9;
       optional double constant_think_time = 10;
       optional double per_task_think_time = 11;
-      optional ResourceUtilization resource_utilization = 12;
-      // Next field number: 12
+      // Track avg resource allocation attributable to tasks actually running.
+      optional double cell_state_avg_cpu_utilization = 12;
+      optional double cell_state_avg_mem_utilization = 13;
+      optional ResourceAllocation resource_allocation = 14;
+      optional ResourceUtilization resource_utilization = 15;
 
+      message ResourceAllocation {
+        repeated double cpu = 1;
+        repeated double memory = 2;
+      }
       message ResourceUtilization {
         repeated double cpu = 1;
         repeated double memory = 2;

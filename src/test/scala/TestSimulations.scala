@@ -25,10 +25,8 @@
  */
 
 import org.scalatest.FunSuite
-import ClusterSchedulingSimulation.Workload
 import ClusterSchedulingSimulation.WorkloadDesc
 import ClusterSchedulingSimulation.Job
-import ClusterSchedulingSimulation.UniformWorkloadGenerator
 import ClusterSchedulingSimulation.CellState
 import ClusterSchedulingSimulation.ClusterSimulator
 import ClusterSchedulingSimulation.MonolithicScheduler
@@ -37,10 +35,9 @@ import ClusterSchedulingSimulation.MesosAllocator
 import ClusterSchedulingSimulation.ClaimDelta
 import ClusterSchedulingSimulation.OmegaSimulator
 import ClusterSchedulingSimulation.OmegaScheduler
-import ClusterSchedulingSimulation.PrefillPbbTraceWorkloadGenerator
-import ClusterSchedulingSimulation.InterarrivalTimeTraceExpExpWLGenerator
+import ClusterSchedulingSimulation.core.{Job, Workload}
 import ClusterSchedulingSimulation.schedulers._
-import schedulers._
+import ClusterSchedulingSimulation.workloads.{InterarrivalTimeTraceExpExpWLGenerator, PrefillPbbTraceWorkloadGenerator, UniformWorkloadGenerator}
 
 import collection.mutable.HashMap
 import collection.mutable.ListBuffer
@@ -60,13 +57,7 @@ class SimulatorsTestSuite extends FunSuite {
                     // hand calculations used in assert()-s below.
 
     (1 to numJobs).foreach(i => {
-      workload.addJob(new Job(id = i,
-                                   submitted = 0,
-                                   numTasks = i,
-                                   taskDuration = i,
-                                   workloadName = workload.name,
-                                   cpusPerTask = 1.0,
-                                   memPerTask = 1.0))
+      workload.addJob(new Job(id = i, submitted = 0, taskDuration = i, workloadName = workload.name, cpusPerTask = 1.0, memPerTask = 1.0))
     })
     assert(workload.numJobs == numJobs)
     assert(workload.getJobs.last.id == numJobs)
@@ -114,13 +105,7 @@ class SimulatorsTestSuite extends FunSuite {
 
     workload = new Workload("unif")
     (1 to numJobs).foreach(i => {
-      workload.addJob(Job(id = i,
-                               submitted = i,
-                               numTasks = i,
-                               taskDuration = i,
-                               workloadName = workload.name,
-                               cpusPerTask = 1.0,
-                               memPerTask = 1.0))
+      workload.addJob(Job(id = i, submitted = i, taskDuration = i, workloadName = workload.name, cpusPerTask = 1.0, memPerTask = 1.0))
     })
 
     // Create a simple scheduler.
@@ -178,13 +163,7 @@ class SimulatorsTestSuite extends FunSuite {
     val workload = new Workload("unif")
     val numJobs = 40 
     (1 to numJobs).foreach(i => {
-      workload.addJob(Job(id = i,
-                               submitted = i,
-                               numTasks = i,
-                               taskDuration = i,
-                               workloadName = workload.name,
-                               cpusPerTask = 1.0,
-                               memPerTask = 1.0))
+      workload.addJob(Job(id = i, submitted = i, taskDuration = i, workloadName = workload.name, cpusPerTask = 1.0, memPerTask = 1.0))
     })
 
     // Create a simple scheduler, turn off partial job scheduling
@@ -255,13 +234,7 @@ class SimulatorsTestSuite extends FunSuite {
     println("\nRunning cellstate functionality test.")
     // Set up a workload with one job with one task.
     val workload = new Workload("unif")
-    workload.addJob(Job(id = 1,
-                        submitted = 1.0,
-                        numTasks = 1,
-                        taskDuration = 10.0,
-                        workloadName = workload.name,
-                        cpusPerTask = 1.0,
-                        memPerTask = 1.0))
+    workload.addJob(Job(id = 1, submitted = 1.0, taskDuration = 10.0, workloadName = workload.name, cpusPerTask = 1.0, memPerTask = 1.0))
 
     // Create an Omega scheduler.
     val scheduler = new OmegaScheduler(name = "omega_test_sched",
@@ -376,13 +349,7 @@ class SimulatorsTestSuite extends FunSuite {
     println("===========\nomegaSchedulerTest\n==========")
     println("\nRunning cellstate flow test.")
     val workload = new Workload("unif")
-    workload.addJob(Job(id = 1,
-                             submitted = 1.0,
-                             numTasks = 1,
-                             taskDuration = 10.0,
-                             workloadName = "unif",
-                             cpusPerTask = 1.0,
-                             memPerTask = 1.0))
+    workload.addJob(Job(id = 1, submitted = 1.0, taskDuration = 10.0, workloadName = "unif", cpusPerTask = 1.0, memPerTask = 1.0))
 
     val scheduler = new OmegaScheduler(name = "omega_test_sched",
                                        constantThinkTimes = Map("unif" -> 1),
@@ -417,13 +384,7 @@ class SimulatorsTestSuite extends FunSuite {
     val workload = new Workload("unif")
     val numJobs = 40 
     (1 to numJobs).foreach(i => {
-      workload.addJob(Job(id = i,
-                               submitted = i,
-                               numTasks = 1,
-                               taskDuration = i,
-                               workloadName = workload.name,
-                               cpusPerTask = 1.0,
-                               memPerTask = 1.0))
+      workload.addJob(Job(id = i, submitted = i, taskDuration = i, workloadName = workload.name, cpusPerTask = 1.0, memPerTask = 1.0))
     })
 
     // Create an Omega scheduler.
