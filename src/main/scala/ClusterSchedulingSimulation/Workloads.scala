@@ -30,7 +30,7 @@ import java.io.File
 
 import ClusterSchedulingSimulation.core.{CellStateDesc, WorkloadDesc}
 import ClusterSchedulingSimulation.utils.Constant
-import ClusterSchedulingSimulation.workloads.{FakeZoeWorkloadGenerator, TraceAllZoeWLGenerator}
+import ClusterSchedulingSimulation.workloads.{FakeZoeDynamicWorkloadGenerator, FakeZoeWorkloadGenerator, TraceAllZoeWLGenerator}
 
 /**
   * Set up workloads based on measurements from a real cluster.
@@ -44,7 +44,7 @@ object Workloads {
   val scaleFactor = 1
   val introduceError = false
 
-  val workloadSize = 2000
+  val workloadSize = 90
 
   val globalNumMachines: Int = 5 * scaleFactor
   val globalCpusPerMachine: Long = 32 * 1000L // value must be in millicores
@@ -54,8 +54,8 @@ object Workloads {
   //  val globalMaxCpusPerTask = 2
   //  val globalMaxMemPerTask = 8
 
-  val globalMaxCpusPerTask: Long = globalCpusPerMachine / 5
-  val globalMaxMemPerTask: Long = globalMemPerMachine / 2
+  val globalMaxCpusPerTask: Long = globalCpusPerMachine / 10
+  val globalMaxMemPerTask: Long = globalMemPerMachine / 4
 
   //  val maxTasksPerJob = ((globalNumMachines * globalCpusPerMachine * 1.5) / globalMaxCpusPerTask).toInt
 
@@ -169,18 +169,19 @@ object Workloads {
 
 //  val fakeWorkloadGenerator = new FakeZoeWorkloadGenerator("Batch")
   //  val fakeWorkloadGenerator = new FakePreemptiveZoeWorkloadGenerator("Batch")
-
-//    val eurecomCellTraceAllWorkloadPrefillDesc =
-//      WorkloadDesc(
-//        cell = "Eurecom",
-//        assignmentPolicy = "CMB_PBB",
-//        workloadGenerators =
-//          fakeWorkloadGenerator ::
-//            Nil,
-//        cellStateDesc = new CellStateDesc(1,
-//          globalCpusPerMachine,
-//          128 * Constant.GiB)
-//      )
+//  val fakeWorkloadGenerator = new FakeZoeDynamicWorkloadGenerator("Batch")
+//
+//  val eurecomCellTraceAllWorkloadPrefillDesc =
+//    WorkloadDesc(
+//      cell = "Eurecom",
+//      assignmentPolicy = "CMB_PBB",
+//      workloadGenerators =
+//        fakeWorkloadGenerator ::
+//          Nil,
+//      cellStateDesc = new CellStateDesc(1,
+//        globalCpusPerMachine,
+//        128 * Constant.GiB)
+//    )
 
   val eurecomCellTraceAllWorkloadPrefillDesc =
     WorkloadDesc(

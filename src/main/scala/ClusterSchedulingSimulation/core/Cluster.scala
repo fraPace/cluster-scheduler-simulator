@@ -92,45 +92,6 @@ class CellState(val numMachines: Int,
 
 //  def isFull: Boolean = availableCpus.floor <= 0 || availableMem.floor <= 0
 
-  def reclaimNotUsedResources(): (Set[ClaimDelta], Set[ClaimDelta], Long, Long, Long, Long) = {
-    val claimDeltasOOMRisk: mutable.HashSet[ClaimDelta] = mutable.HashSet[ClaimDelta]()
-    val claimDeltasOOMKilled: mutable.HashSet[ClaimDelta] = mutable.HashSet[ClaimDelta]()
-
-    var cpuVariation: Long = 0L
-    var memVariation: Long = 0L
-
-    var cpuConflicts: Long = 0
-    var memConflicts: Long = 0
-
-    for (i <- 0 until numMachines) {
-      claimDeltasPerMachine(i).foreach(claimDelta => {
-        claimDelta.job match {
-          case Some(job) =>
-            val (slackCpu, slackMem): (Option[Long], Option[Long]) =
-              claimDelta.resize(this,job.cpuUtilization(simulator.currentTime), job.memoryUtilization(simulator.currentTime))
-
-            slackCpu match {
-              case Some(slack) => cpuVariation += slack
-              case None => cpuConflicts += 1
-            }
-
-            slackMem match {
-              case Some(slack) => memVariation += slack
-              case None => memConflicts += 1
-            }
-
-            claimDelta.status match {
-              case ClaimDeltaStatus.OOMRisk => claimDeltasOOMRisk += claimDelta
-              case ClaimDeltaStatus.OOMKilled => claimDeltasOOMKilled += claimDelta
-              case _ => None
-            }
-          case None => None
-        }
-      })
-    }
-    (claimDeltasOOMRisk.toSet, claimDeltasOOMKilled.toSet,  cpuVariation, memVariation, cpuConflicts, memConflicts)
-  }
-
   /**
     * Allocate resources on a machine to a scheduler.
     *
@@ -353,13 +314,14 @@ class CellState(val numMachines: Int,
     val jobs: ListBuffer[Job] = ListBuffer[Job]()
     claimDeltas.foreach(appliedDelta => {
       val job = appliedDelta.job.get
+      lazy val jobPrefix = "[Job " + job.id + " (" + job.workloadName + ")]"
       if (!jobs.contains(job))
         jobs += job
       val realDelay = if (delay == -1) appliedDelta.duration else delay
       if (realDelay > maxDelay) maxDelay = realDelay
       simulator.afterDelay(realDelay, eventType = EventType.Remove, itemId = job.id) {
         appliedDelta.unApply(simulator.cellState)
-        simulator.logger.info(appliedDelta.scheduler.loggerPrefix + " A task finished. Freeing " +
+        simulator.logger.info(appliedDelta.scheduler.loggerPrefix + jobPrefix + " A task finished. Freeing " +
           appliedDelta.currentCpus + " CPUs, " + appliedDelta.currentMem + " mem. Available: " + availableCpus + " CPUs, " + availableMem + " mem.")
       }
     })

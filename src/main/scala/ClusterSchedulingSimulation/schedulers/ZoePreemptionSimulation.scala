@@ -783,7 +783,7 @@ class ZoePreemptionScheduler(name: String,
               job.jobFinishedWorking = simulator.currentTime + jobLeftDuration
 
               // We have to remove all the incoming simulation events that work on this job.
-              simulator.removeIf(x => x.itemId == job.id &&
+              simulator.removeIf(x => x.eventID == job.id &&
                 (x.eventType == EventType.Remove || x.eventType == EventType.Trigger))
 
               simulator.afterDelay(jobLeftDuration, eventType = EventType.Remove, itemId = job.id) {
@@ -921,7 +921,7 @@ class ZoePreemptionScheduler(name: String,
                 job.jobFinishedWorking = simulator.currentTime + jobLeftDuration
 
                 // We have to remove all the incoming simulation events that work on this job.
-                simulator.removeIf(x => x.itemId == job.id &&
+                simulator.removeIf(x => x.eventID == job.id &&
                   (x.eventType == EventType.Remove || x.eventType == EventType.Trigger))
 
                 simulator.afterDelay(jobLeftDuration, eventType = EventType.Remove, itemId = job.id) {

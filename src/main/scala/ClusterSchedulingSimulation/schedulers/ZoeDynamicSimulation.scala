@@ -29,12 +29,12 @@
 
 package ClusterSchedulingSimulation.schedulers
 
+import ClusterSchedulingSimulation.core.ClaimDelta.ResizePolicy
+import ClusterSchedulingSimulation.core.ClaimDelta.ResizePolicy.ResizePolicy
 import ClusterSchedulingSimulation.core._
-import ClusterSchedulingSimulation.utils.{Constant, Profiling}
 import com.typesafe.scalalogging.LazyLogging
 
 import scala.collection.mutable
-import scala.math
 
 /* This class and its subclasses are used by factory method
  * ClusterSimulator.newScheduler() to determine which type of Simulator
@@ -117,155 +117,178 @@ class ZoeDynamicScheduler (name: String,
   logger.debug("scheduler-id-info: " + Thread.currentThread().getId + ", " + name + ", " + hashCode() + ", " + constantThinkTimes.mkString(";")
     + ", " + perTaskThinkTimes.mkString(";"))
 
-  val wakeUpInterval: Double = 60.0
+  val reclaimResourcesPeriod: Double = 15.0
+  val crashedAllowed = 1
   var checkingResourceUtilization: Boolean = false
+  val resizePolicy: ResizePolicy = ResizePolicy.Instant
 
   override def addRunningJob(job: Job): Unit = {
     super.addRunningJob(job)
-    Profiling.time(checkResourceUtilization(), "checkResourceUtilization()")
-//    checkResourceUtilization()
+    if (reclaimResourcesPeriod > 0) {
+      simulator.afterDelay(reclaimResourcesPeriod) {
+        checkResourceUtilization()
+      }
+    }
+  }
+
+  def killJob(job: Job): Unit = {
+    simulator.logger.info(loggerPrefix + job.loggerPrefix + " A core component crashed. We are killing the application and rescheduling.")
+    job.finalStatus = JobStatus.Crashed
+    job.numJobCrashes += 1
+
+    job.claimDeltas.foreach(_.unApply(simulator.cellState))
+
+    // We have to remove all the incoming simulation events that work on this job.
+    simulator.removeIf(x => x.eventID == job.id &&
+      (x.eventType == EventType.Remove || x.eventType == EventType.Trigger))
+
+    removePendingJob(job)
+    removeRunningJob(job)
+
+    job.reset()
+    if (job.numJobCrashes >= crashedAllowed){
+      job.disableResize = true
+      simulator.logger.info(loggerPrefix + job.loggerPrefix + " This job crashed more than " + crashedAllowed + " times. Disabling resize.")
+    }
+    addPendingJob(job, prepend = true)
+
+    wakeUp()
+  }
+
+  def killElasticClaimDeltas(job: Job, elastic: mutable.HashSet[ClaimDelta]): Unit = {
+    lazy val elasticPrefix = "[Elastic]"
+    simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + elastic.size + " elastic component crashed.")
+
+    elastic.foreach(_.unApply(simulator.cellState))
+    job.removeElasticClaimDeltas(elastic.toSeq)
+    // We have to reinsert the job in queue if this had all it's elastic services allocated
+    if (job.elasticTasksUnscheduled == 0) {
+      addPendingJob(job, prepend = true)
+    }
+
+    val jobLeftDuration: Double = job.estimateJobDuration(currTime = simulator.currentTime, tasksRemoved = elastic.size)
+
+    job.jobFinishedWorking = simulator.currentTime + jobLeftDuration
+
+    // We have to remove all the incoming simulation events that work on this job.
+    simulator.removeIf(x => x.eventID == job.id &&
+      (x.eventType == EventType.Remove || x.eventType == EventType.Trigger))
+
+    simulator.afterDelay(jobLeftDuration, eventType = EventType.Remove, itemId = job.id) {
+      simulator.logger.info(loggerPrefix + job.loggerPrefix + " Completed after " + (simulator.currentTime - job.jobStartedWorking) + "s.It had " + job.claimDeltas.size + " tasks allocated.")
+      job.finalStatus = JobStatus.Completed
+      removePendingJob(job)
+      removeRunningJob(job)
+    }
+    simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Adding finished event after " + jobLeftDuration + " seconds to wake up scheduler.")
+    simulator.cellState.scheduleEndEvents(job.claimDeltas.toSeq, delay = jobLeftDuration)
   }
 
   def checkResourceUtilization(): Unit = {
     if (!checkingResourceUtilization & numRunningJobs > 0) {
       checkingResourceUtilization = true
 
-      val jobsClaimDeltasOOMKilled: mutable.HashMap[Job, (Int, mutable.HashSet[ClaimDelta])] = mutable.HashMap[Job, (Int, mutable.HashSet[ClaimDelta])]()
+      var jobsClaimDeltasOOMKilled: mutable.HashMap[Job, mutable.HashSet[ClaimDelta]] = mutable.HashMap[Job, mutable.HashSet[ClaimDelta]]()
+      val claimDeltasOOMRisk: mutable.HashSet[ClaimDelta] = mutable.HashSet[ClaimDelta]()
 
-      val (claimDeltasOOMRisk, claimDeltasOOMKilled,  cpuVariation, memVariation, cpuConflicts, memConflicts):
-        (Set[ClaimDelta], Set[ClaimDelta], Long, Long, Long, Long) = reclaimNotUsedResources(simulator.cellState)
+      var cpuVariation: Long = 0
+      var memVariation: Long = 0
 
-      val claimDeltasToSkip: mutable.HashMap[ClaimDelta, Int] = mutable.HashMap[ClaimDelta, Int]()
+      for (i <- 0 until simulator.cellState.numMachines) {
+        simulator.cellState.claimDeltasPerMachine(i).foreach(claimDelta => {
+          claimDelta.job match {
+            case Some(job) =>
+              if (!job.disableResize &&
+                job.finalStatus != JobStatus.Crashed && job.finalStatus != JobStatus.Completed && job.finalStatus != JobStatus.Not_Scheduled) {
 
-      if(claimDeltasOOMKilled.nonEmpty)
-        simulator.logger.info(loggerPrefix + " Killed " + claimDeltasOOMKilled.size + " claim deltas because of OOM.")
-      claimDeltasOOMKilled.foreach(claimDelta => {
-        if(claimDelta.job.isDefined){
-          claimDeltasToSkip(claimDelta) = 1
-          val job = claimDelta.job.get
-          var (inelastic, elastic) = jobsClaimDeltasOOMKilled.getOrElse(job, (0, mutable.HashSet[ClaimDelta]()))
-          if(claimDelta.taskType == TaskType.Elastic) {
-            elastic += claimDelta
-          }else {
-            inelastic += 1
-          }
-          jobsClaimDeltasOOMKilled(job) = (inelastic, elastic)
-        }
-      })
-      if(claimDeltasOOMRisk.nonEmpty)
-        simulator.logger.info(loggerPrefix + " " + claimDeltasOOMKilled.size + " claim deltas might be incur into a OOM kill.")
-      claimDeltasOOMRisk.foreach(claimDelta => {
-        if(claimDelta.job.isDefined && !claimDeltasToSkip.contains(claimDelta)){
-          val job = claimDelta.job.get
-          val (inelastic, elastic) = jobsClaimDeltasOOMKilled.getOrElse(job, (0, mutable.HashSet[ClaimDelta]()))
-          if(claimDelta.taskType == TaskType.Elastic) {
-            claimDeltasToSkip(claimDelta) = 1
-            elastic += claimDelta
-          }else{
-            var memToBeFreed: Long = claimDelta.lastSlackMem.get
-            simulator.cellState.claimDeltasPerMachine(claimDelta.machineID).foreach(machineClaimDelta => {
-              if(memToBeFreed > 0 && machineClaimDelta != claimDelta && !claimDeltasToSkip.contains(machineClaimDelta) && machineClaimDelta.taskType == TaskType.Elastic){
-                claimDeltasToSkip(machineClaimDelta) = 1
+                val futureCpus = job.cpuUtilization(simulator.currentTime + reclaimResourcesPeriod)
+                val futureMem = job.memoryUtilization(simulator.currentTime + reclaimResourcesPeriod)
+                val currentCpus = job.cpuUtilization(simulator.currentTime)
+                val currentMem = job.memoryUtilization(simulator.currentTime)
 
-                val job1 = machineClaimDelta.job.get
-                val (inelastic1, elastic1) = jobsClaimDeltasOOMKilled.getOrElse(job1, (0, mutable.HashSet[ClaimDelta]()))
-                elastic1 += machineClaimDelta
-                jobsClaimDeltasOOMKilled(job1) = (inelastic1, elastic1)
+                val (slackCpu, slackMem): (Long, Long) = claimDelta.resize(simulator.cellState,
+                  Math.max(futureCpus, currentCpus), Math.max(futureMem, currentMem), resizePolicy = resizePolicy)
+                cpuVariation += slackCpu
+                memVariation += slackMem
 
-                memToBeFreed -= machineClaimDelta.currentMem
-              }
-            })
-            if(memToBeFreed > 0){
-              simulator.cellState.claimDeltasPerMachine(claimDelta.machineID).foreach(machineClaimDelta => {
-                if(memToBeFreed > 0 && machineClaimDelta != claimDelta && !claimDeltasToSkip.contains(machineClaimDelta) && machineClaimDelta.taskType == TaskType.Core){
-                  claimDeltasToSkip(machineClaimDelta) = 1
-
-                  val job1 = machineClaimDelta.job.get
-                  var (inelastic1, elastic1) = jobsClaimDeltasOOMKilled.getOrElse(job1, (0, mutable.HashSet[ClaimDelta]()))
-                  inelastic1 += 1
-                  jobsClaimDeltasOOMKilled(job1) = (inelastic1, elastic1)
-
-                  memToBeFreed -= machineClaimDelta.currentMem
+                if(resizePolicy != ClaimDelta.ResizePolicy.None) {
+                  claimDelta.checkResourcesLimits(currentCpus, currentMem) match {
+                    case ClaimDeltaStatus.OOMRisk =>
+                      if(claimDelta.taskType == TaskType.Core) {
+                        var memToFree: Long = claimDelta.memStillNeeded
+                        val jobsClaimDeltasToKill: mutable.HashMap[Job, mutable.HashSet[ClaimDelta]] = mutable.HashMap[Job, mutable.HashSet[ClaimDelta]]()
+                        simulator.cellState.claimDeltasPerMachine(i).foreach( cd =>
+                          if(memToFree > 0 && cd.taskType == TaskType.Elastic){
+                            memToFree -= cd.currentMem
+                            jobsClaimDeltasToKill(cd.job.get) = jobsClaimDeltasToKill.getOrElse(cd.job.get, mutable.HashSet[ClaimDelta]()) + cd
+                          }
+                        )
+                        if(memToFree <= 0){
+                          claimDeltasOOMRisk += claimDelta
+                          jobsClaimDeltasToKill.foreach{case(job1, elastics) =>
+                            jobsClaimDeltasOOMKilled(job1) = jobsClaimDeltasOOMKilled.getOrElse(job1, mutable.HashSet[ClaimDelta]()) ++ elastics
+                          }
+                        }
+                      }
+                    case ClaimDeltaStatus.OOMKilled =>
+                      if (claimDelta.taskType == TaskType.Elastic) {
+                        jobsClaimDeltasOOMKilled(job) = jobsClaimDeltasOOMKilled.getOrElse(job, mutable.HashSet[ClaimDelta]()) + claimDelta
+                      } else {
+                        jobsClaimDeltasOOMKilled -= job
+                        killJob(job)
+                      }
+                    case _ => None
+                  }
                 }
-              })
-            }
+              }
+            case None => None
           }
-          jobsClaimDeltasOOMKilled(job) = (inelastic, elastic)
-        }
-      })
-
-
-      jobsClaimDeltasOOMKilled.foreach{case (job, (inelastic, elastic)) =>
-        lazy val jobPrefix = "[Job " + job.id + " (" + job.workloadName + ")] "
-        lazy val elasticPrefix = "[Elastic]"
-        if(inelastic > 0){
-          if (job.finalStatus != JobStatus.Completed) {
-            simulator.logger.info(loggerPrefix + jobPrefix + " A core component crashed. We are killing the application and rescheduling.")
-            job.finalStatus = JobStatus.Crashed
-            job.numJobCrashes += 1
-
-            job.claimDeltas.foreach(_.unApply(simulator.cellState))
-
-            // We have to remove all the incoming simulation events that work on this job.
-            simulator.removeIf(x => x.itemId == job.id &&
-              (x.eventType == EventType.Remove || x.eventType == EventType.Trigger))
-
-            removePendingJob(job)
-            removeRunningJob(job)
-
-//            if (job.numJobCrashes < 100){
-//              job.reset()
-//              addPendingJob(job, prepend = true)
-//            }else{
-//              simulator.logger.warn(loggerPrefix + jobPrefix + " This job crashed more than 100 times. Not rescheduling it.")
-//            }
-            
-            wakeUp()
-          }
-        }else if (elastic.nonEmpty) {
-          simulator.logger.info(loggerPrefix + elasticPrefix + jobPrefix + " " + elastic.size + " elastic component crashed.")
-          job.removeElasticClaimDeltas(elastic.toSeq)
-          elastic.foreach(_.unApply(simulator.cellState))
-          // We have to reinsert the job in queue if this had all it's elastic services allocated
-          if (job.elasticTasksUnscheduled == 0) {
-            addPendingJob(job, prepend = true)
-          }
-
-          val jobLeftDuration: Double = job.estimateJobDuration(currTime = simulator.currentTime, tasksRemoved = elastic.size)
-
-          job.jobFinishedWorking = simulator.currentTime + jobLeftDuration
-
-          // We have to remove all the incoming simulation events that work on this job.
-          simulator.removeIf(x => x.itemId == job.id &&
-            (x.eventType == EventType.Remove || x.eventType == EventType.Trigger))
-
-          simulator.afterDelay(jobLeftDuration, eventType = EventType.Remove, itemId = job.id) {
-            simulator.logger.info(loggerPrefix + jobPrefix + " Completed after " + (simulator.currentTime - job.jobStartedWorking) + "s.")
-            job.finalStatus = JobStatus.Completed
-            //                previousJob = null
-            removePendingJob(job)
-            removeRunningJob(job)
-          }
-          simulator.logger.info(loggerPrefix + elasticPrefix + jobPrefix + " Adding finished event after " + jobLeftDuration + " seconds to wake up scheduler.")
-          simulator.cellState.scheduleEndEvents(job.claimDeltas.toSeq, delay = jobLeftDuration)
-        }
+        })
       }
 
+      jobsClaimDeltasOOMKilled.foreach { case (job, elastic) => killElasticClaimDeltas(job, elastic)}
+      claimDeltasOOMRisk.foreach(claimDelta => {
+        claimDelta.job match {
+          case Some(job) =>
+            if (job.finalStatus != JobStatus.Crashed && job.finalStatus != JobStatus.Completed &&
+              job.finalStatus != JobStatus.Not_Scheduled) {
 
-//      simulator.logger.info(loggerPrefix + " Variation of " + cpuVariation + " CPUs and " + memVariation +
-//        " memory. The global cell state now is (" + simulator.cellState.availableCpus + " CPUs, " + simulator.cellState.availableMem + " mem)")
+              val futureCpus = job.cpuUtilization(simulator.currentTime + reclaimResourcesPeriod)
+              val futureMem = job.memoryUtilization(simulator.currentTime + reclaimResourcesPeriod)
+              val currentCpus = job.cpuUtilization(simulator.currentTime)
+              val currentMem = job.memoryUtilization(simulator.currentTime)
+
+              val (slackCpu, slackMem): (Long, Long) = claimDelta.resize(simulator.cellState,
+                Math.max(futureCpus, currentCpus), Math.max(futureMem, currentMem), resizePolicy = resizePolicy)
+              cpuVariation += slackCpu
+              memVariation += slackMem
+
+              if(resizePolicy != ClaimDelta.ResizePolicy.None) {
+                claimDelta.checkResourcesLimits(currentCpus, currentMem) match {
+                  case ClaimDeltaStatus.OOMKilled =>
+                    simulator.logger.warn(loggerPrefix + " How is it possible that the claimDelta is in OOMKilled if we just freed the resources for it?")
+                  case _ => None
+                }
+              }
+            }
+
+          case None => None
+        }
+      })
+
+//        simulator.logger.info(loggerPrefix + " Variation of " + cpuVariation + " CPUs and " + memVariation +
+//          " memory. The global cell state now is (" + simulator.cellState.availableCpus + " CPUs, " + simulator.cellState.availableMem + " mem)")
 
       // This control checks if we claimed some resources (negative values)
       if (cpuVariation < 0 || memVariation < 0) {
-//        simulator.logger.info(loggerPrefix + " Getting up to check if I can schedule some jobs with the reclaimed resources")
+        simulator.logger.debug(loggerPrefix + " Getting up to check if I can schedule some jobs with the reclaimed resources")
         wakeUp()
       }
 
       checkingResourceUtilization = false
-      if (wakeUpInterval > 0) {
-        simulator.afterDelay(wakeUpInterval) {
-          Profiling.time(checkResourceUtilization(), "checkResourceUtilization()")
-//          checkResourceUtilization()
+      if (reclaimResourcesPeriod > 0) {
+        simulator.afterDelay(reclaimResourcesPeriod) {
+          checkResourceUtilization()
         }
       }
     }

@@ -35,7 +35,7 @@ import scala.util.Random
 
 object JobStatus extends Enumeration {
   type JobStatus = Value
-  val TimedOut, Not_Scheduled, Partially_Scheduled, Fully_Scheduled, Completed, Crashed = Value
+  val TimedOut, Not_Scheduled, Partially_Scheduled, Fully_Scheduled, Completed, Crashed, Killed = Value
 
   def exists(jobStatus: JobStatus): Boolean = values.exists(_.equals(jobStatus))
   def valuesToString(): String = {values.toString()}
@@ -71,8 +71,8 @@ case class Job(id: Long,
                numCoreTasks: Option[Int] = None,
                priority: Int = 0,
                error: Double = 1) extends LazyLogging {
-  assert(_numTasks != 0, {
-    "numTasks for job " + id + " is " + _numTasks
+  assert(_numTasks != 0 || (numCoreTasks.isDefined && numCoreTasks.get != 0), {
+    "numTasks for job " + id + " is " + _numTasks + " and numCoreTasks is " + numCoreTasks
   })
 //  assert(!cpusPerTask.isNan), {
 //    "cpusPerTask for job " + id + " is " + cpusPerTask
@@ -131,6 +131,10 @@ case class Job(id: Long,
 
   private[this] var _numJobCrashes: Long = 0
 
+  lazy val loggerPrefix: String = "[Job " + id + " (" + workloadName + ")]"
+
+  var disableResize: Boolean = false
+
   def numJobCrashes: Long = _numJobCrashes
   def numJobCrashes_=(value: Long): Unit = {
     _numJobCrashes = value
@@ -145,11 +149,17 @@ case class Job(id: Long,
 
   def cpuUtilization: Array[Long] = _cpuUtilization
   def cpuUtilization_=(value: Array[Long]): Unit = {
+    value.foreach(v => assert(v <= cpusPerTask, {
+      "CPU Utilization (" + v + ") is higher than allocated (" + cpusPerTask + ")."
+    }))
     _cpuUtilization = value
   }
 
   def memoryUtilization: Array[Long] = _memoryUtilization
   def memoryUtilization_=(value: Array[Long]): Unit = {
+    value.foreach(v => assert(v <= memPerTask, {
+      "Memory Utilization (" + v + ") is higher than allocated (" + memPerTask + ")."
+    }))
     _memoryUtilization = value
   }
 
@@ -159,20 +169,13 @@ case class Job(id: Long,
       case _ => false
     }
 
+
   def cpuUtilization(currtime: Double): Long = {
-    val value = _cpuUtilization(((currtime - _jobStartedWorking) % _cpuUtilization.length).toInt)
-    assert(value <= cpusPerTask, {
-      "CPU Utilization (" + value + ") is higher than allocated (" + cpusPerTask + ")."
-    })
-    value
+    _cpuUtilization((currtime - _jobStartedWorking).toInt % _cpuUtilization.length)
   }
 
   def memoryUtilization(currtime: Double): Long = {
-    val value = _memoryUtilization(((currtime - _jobStartedWorking) % _memoryUtilization.length).toInt)
-    assert(value <= memPerTask, {
-      "Memory Utilization (" + value + ") is higher than allocated (" + memPerTask + ")."
-    })
-    value
+    _memoryUtilization((currtime - _jobStartedWorking).toInt % _memoryUtilization.length)
   }
 
   def coreClaimDeltas: mutable.HashSet[ClaimDelta] = _coreClaimDeltas
@@ -199,6 +202,10 @@ case class Job(id: Long,
   def removeElasticClaimDeltas(value:Seq[ClaimDelta]): Unit = {
     _elasticClaimDeltas --= value
     _claimDeltas --= value
+  }
+  def removeElasticClaimDelta(value:ClaimDelta): Unit = {
+    _elasticClaimDeltas -= value
+    _claimDeltas -= value
   }
 
   def claimDeltas: mutable.HashSet[ClaimDelta] = _claimDeltas

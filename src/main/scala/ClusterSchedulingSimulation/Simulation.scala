@@ -78,7 +78,7 @@ object Simulation extends LazyLogging {
     val runOmega = false
     val runZoe = true
     val runZoePreemption = false
-    val runZoeDynamic = false
+    val runZoeDynamic = true
 
     val globalRunTime = 86400.0 * 90 //86400.0 // 1 Day
     val threadSleep = 5
@@ -154,8 +154,8 @@ object Simulation extends LazyLogging {
       //      PolicyModes.PriorityFifo,
       //      PolicyModes.LJF,
 
-      //      PolicyModes.Fifo,
-      //      PolicyModes.eFifo,
+//            PolicyModes.Fifo,
+//            PolicyModes.eFifo,
       PolicyModes.hFifo //,
       //      PolicyModes.PSJF,
       //      PolicyModes.ePSJF,

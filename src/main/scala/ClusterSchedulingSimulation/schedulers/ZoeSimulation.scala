@@ -296,7 +296,6 @@ class ZoeScheduler(name: String,
           var clusterFreeResources: Long = privateCellState.availableCpus * privateCellState.availableMem
 
           jobsToAttemptScheduling.foreach(job => {
-            lazy val jobPrefix = "[Job " + job.id + " (" + job.workloadName + ")] "
             var claimDelta_core = new ListBuffer[ClaimDelta]()
             var claimDelta_elastic = new ListBuffer[ClaimDelta]()
             job.numSchedulingAttempts += 1
@@ -358,12 +357,12 @@ class ZoeScheduler(name: String,
                 claimDelta_elastic = scheduleJob(job, privateCellState, taskType = TaskType.Elastic)
               if (claimDelta_core.nonEmpty || claimDelta_elastic.nonEmpty)
                 jobsToLaunch += ((job, claimDelta_core, claimDelta_elastic))
-//                simulator.logger.info(loggerPrefix + jobPrefix + " The cellstate now have (%f cpu, %f mem) free."
+//                simulator.logger.info(loggerPrefix + job.loggerPrefix + " The cellstate now have (%f cpu, %f mem) free."
 //                  .format(privateCellState.availableCpus, privateCellState.availableMem))
               val taskCanFitPerCpus = Math.floor(privateCellState.cpusPerMachine.toDouble / job.cpusPerTask.toDouble) * privateCellState.numMachines
               val taskCanFitPerMem = Math.floor(privateCellState.memPerMachine.toDouble / job.memPerTask) * privateCellState.numMachines
               if (taskCanFitPerCpus < job.numTasks || taskCanFitPerMem < job.numTasks) {
-                simulator.logger.warn(loggerPrefix + jobPrefix + " The cell (" + privateCellState.totalCpus + " cpus, " + privateCellState.totalMem +
+                simulator.logger.warn(loggerPrefix + job.loggerPrefix + " The cell (" + privateCellState.totalCpus + " cpus, " + privateCellState.totalMem +
                   " mem) is not big enough to hold this job all at once which requires " + job.numTasks + " tasks for " + (job.cpusPerTask * job.numTasks) +
                   " cpus and " + (job.memPerTask * job.numTasks) + " mem in total.")
                 jobsCannotFit += job
@@ -378,17 +377,17 @@ class ZoeScheduler(name: String,
                 if (claimDelta_elastic.size == job.elasticTasks) {
                   jobsToLaunch += ((job, claimDelta_core, claimDelta_elastic))
                 } else {
-                  simulator.logger.info(loggerPrefix + jobPrefix + " Not all services scheduled (" + claimDelta_elastic.size + "/" + job.elasticTasks +
+                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " Not all services scheduled (" + claimDelta_elastic.size + "/" + job.elasticTasks +
                     "). Rolling back. The cellstate had (" + privateCellState.availableCpus + " cpus, " + privateCellState.availableMem + " mem) free.")
-                  simulator.logger.info(loggerPrefix + jobPrefix + " Total resources requested: (" + (job.cpusPerTask * job.elasticTasks) +
+                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " Total resources requested: (" + (job.cpusPerTask * job.elasticTasks) +
                     " cpus, " + (job.memPerTask * job.elasticTasks) + " mem)")
                   claimDelta_elastic.foreach(_.unApply(privateCellState))
-                  simulator.logger.info(loggerPrefix + jobPrefix + " The cellstate now have (" + privateCellState.availableCpus + " cpu, " + privateCellState.availableMem + " mem) free.")
+                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " The cellstate now have (" + privateCellState.availableCpus + " cpu, " + privateCellState.availableMem + " mem) free.")
 
                   val taskCanFitPerCpus = Math.floor(privateCellState.cpusPerMachine.toDouble / job.cpusPerTask.toDouble) * privateCellState.numMachines
                   val taskCanFitPerMem = Math.floor(privateCellState.memPerMachine.toDouble / job.memPerTask) * privateCellState.numMachines
                   if (taskCanFitPerCpus < job.numTasks || taskCanFitPerMem < job.numTasks) {
-                    simulator.logger.warn(loggerPrefix + jobPrefix + " The cell (" + privateCellState.totalCpus + " cpus, " + privateCellState.totalMem +
+                    simulator.logger.warn(loggerPrefix + job.loggerPrefix + " The cell (" + privateCellState.totalCpus + " cpus, " + privateCellState.totalMem +
                       " mem) is not big enough to hold this job all at once which requires " + job.numTasks + " tasks for " + (job.cpusPerTask * job.numTasks) +
                       " cpus and " + (job.memPerTask * job.numTasks) + " mem in total.")
                     jobsCannotFit += job
@@ -407,7 +406,6 @@ class ZoeScheduler(name: String,
           simulator.logger.info(loggerPrefix + allJobPrefix + " There are " + jobsToLaunch.size + " jobs that can be allocated.")
           var serviceDeployed = 0
           jobsToLaunch.foreach { case (job, inelastic, elastic) =>
-            lazy val jobPrefix = "[Job " + job.id + " (" + job.workloadName + ")]"
 //            var inelasticTasksUnscheduled: Int = job.tasksUnscheduled
 //            var elasticTasksUnscheduled: Int = job.elasticTasksUnscheduled
 
@@ -430,17 +428,17 @@ class ZoeScheduler(name: String,
                     job.firstScheduled = false
                   }
 
-                  simulator.logger.info(loggerPrefix + jobPrefix + " Scheduled " + inelastic.size + " tasks, " + job.coreTasksUnscheduled + " remaining.")
+                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " Scheduled " + inelastic.size + " tasks, " + job.coreTasksUnscheduled + " remaining.")
                 } else {
                   //                  numFailedTransactions += 1
-                  simulator.logger.info(loggerPrefix + jobPrefix + " There was a conflict when committing the task allocation to the real cell.")
+                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " There was a conflict when committing the task allocation to the real cell.")
                   //                  recordWastedTimeScheduling(job, getThinkTime(job), job.numSchedulingAttempts == 1)
                 }
               } else {
                 //                recordWastedTimeScheduling(job, getThinkTime(job), job.numSchedulingAttempts == 1)
                 //                numNoResourcesFoundSchedulingAttempts += 1
 
-                simulator.logger.info(loggerPrefix + jobPrefix + " No tasks scheduled (" + job.cpusPerTask +
+                simulator.logger.info(loggerPrefix + job.loggerPrefix + " No tasks scheduled (" + job.cpusPerTask +
                   " cpu " + job.memPerTask + "mem per task) during this scheduling attempt, recording wasted time.")
               }
               if (job.coreTasksUnscheduled == 0) {
@@ -449,13 +447,13 @@ class ZoeScheduler(name: String,
                 job.jobFinishedWorking = simulator.currentTime + jobDuration
 
                 simulator.afterDelay(jobDuration, eventType = EventType.Remove, itemId = job.id) {
-                  simulator.logger.info(loggerPrefix + jobPrefix + " Completed after " + (simulator.currentTime - job.jobStartedWorking) + "s.")
+                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " Completed after " + (simulator.currentTime - job.jobStartedWorking) + "s. It had " + job.claimDeltas.size + " tasks allocated.")
                   job.finalStatus = JobStatus.Completed
                   //                  previousJob = null
                   removePendingJob(job)
                   removeRunningJob(job)
                 }
-                simulator.logger.info(loggerPrefix + jobPrefix + " Adding finished event after " + jobDuration + " seconds to wake up scheduler.")
+                simulator.logger.info(loggerPrefix + job.loggerPrefix + " Adding finished event after " + jobDuration + " seconds to wake up scheduler.")
                 simulator.cellState.scheduleEndEvents(job.coreClaimDeltas.toSeq, delay = jobDuration)
 
                 // All tasks in job scheduled so don't put it back in pendingQueueAsList.
@@ -464,16 +462,16 @@ class ZoeScheduler(name: String,
 
                 addRunningJob(job)
 
-                simulator.logger.info(loggerPrefix + jobPrefix + " Fully-Scheduled (" + job.cpusPerTask + " cpu " + job.memPerTask +
+                simulator.logger.info(loggerPrefix + job.loggerPrefix + " Fully-Scheduled (" + job.cpusPerTask + " cpu " + job.memPerTask +
                   " mem per task), after " + job.numSchedulingAttempts + " scheduling attempts.")
               } else {
-                simulator.logger.info(loggerPrefix + jobPrefix + " Not fully scheduled, " + job.coreTasksUnscheduled + " / " + job.coreTasks +
+                simulator.logger.info(loggerPrefix + job.loggerPrefix + " Not fully scheduled, " + job.coreTasksUnscheduled + " / " + job.coreTasks +
                   " tasks remain (shape: " + job.cpusPerTask + " cpus, " + job.memPerTask + " mem per task). Leaving it in the queue.")
               }
             }
 
             if (job.finalStatus == JobStatus.Completed) {
-              simulator.logger.info(loggerPrefix + elasticPrefix + jobPrefix + " Finished during the thinking time. Do not process it.")
+              simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Finished during the thinking time. Do not process it.")
             } else if (job.elasticTasksUnscheduled > 0) {
               var elasticTasksLaunched = 0
               if (elastic.nonEmpty) {
@@ -488,10 +486,10 @@ class ZoeScheduler(name: String,
 //                  job.elasticTasksUnscheduled = elasticTasksUnscheduled
                   //                  numSuccessfulTransactions += 1
 
-                  simulator.logger.info(loggerPrefix + elasticPrefix + jobPrefix + " Scheduled " + elasticTasksLaunched + " tasks, " + job.elasticTasksUnscheduled + " remaining.")
+                  simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Scheduled " + elasticTasksLaunched + " tasks, " + job.elasticTasksUnscheduled + " remaining.")
                 } else {
                   //                  numFailedTransactions += 1
-                  simulator.logger.info(loggerPrefix + elasticPrefix + jobPrefix + " There was a conflict when committing the task allocation to the real cell.")
+                  simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " There was a conflict when committing the task allocation to the real cell.")
                   //                  recordWastedTimeScheduling(job, getThinkTime(job), job.numSchedulingAttempts == 1)
                 }
 
@@ -499,7 +497,7 @@ class ZoeScheduler(name: String,
                 //                recordWastedTimeScheduling(job, getThinkTime(job), job.numSchedulingAttempts == 1)
                 //                numNoResourcesFoundSchedulingAttempts += 1
 
-                simulator.logger.info(loggerPrefix + elasticPrefix + jobPrefix + " No tasks scheduled (" + job.cpusPerTask + " cpu " + job.memPerTask +
+                simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " No tasks scheduled (" + job.cpusPerTask + " cpu " + job.memPerTask +
                   " mem per task) during this scheduling attempt, recording wasted time. " + job.elasticTasksUnscheduled + " unscheduled tasks remaining.")
               }
               if (elasticTasksLaunched > 0) {
@@ -508,17 +506,17 @@ class ZoeScheduler(name: String,
                 job.jobFinishedWorking = simulator.currentTime + jobLeftDuration
 
                 // We have to remove all the incoming simulation events that work on this job.
-                simulator.removeIf(x => x.itemId == job.id &&
+                simulator.removeIf(x => x.eventID == job.id &&
                   (x.eventType == EventType.Remove || x.eventType == EventType.Trigger))
 
                 simulator.afterDelay(jobLeftDuration, eventType = EventType.Remove, itemId = job.id) {
-                  simulator.logger.info(loggerPrefix + jobPrefix + " Completed after " + (simulator.currentTime - job.jobStartedWorking) + "s.")
+                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " Completed after " + (simulator.currentTime - job.jobStartedWorking) + "s. It had " + job.claimDeltas.size + " tasks allocated.")
                   job.finalStatus = JobStatus.Completed
                   //                  previousJob = null
                   removePendingJob(job)
                   removeRunningJob(job)
                 }
-                simulator.logger.info(loggerPrefix + elasticPrefix + jobPrefix + " Adding finished event after " + jobLeftDuration + " seconds to wake up scheduler.")
+                simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Adding finished event after " + jobLeftDuration + " seconds to wake up scheduler.")
                 simulator.cellState.scheduleEndEvents(job.claimDeltas.toSeq, delay = jobLeftDuration)
               }
             }

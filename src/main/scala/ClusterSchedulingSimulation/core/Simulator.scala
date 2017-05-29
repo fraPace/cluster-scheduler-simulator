@@ -4,6 +4,7 @@ import ch.qos.logback.classic.Level
 import com.typesafe.scalalogging.{LazyLogging, Logger}
 import org.slf4j.LoggerFactory
 
+import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
 
@@ -33,26 +34,11 @@ abstract class Simulator(logging: Boolean = false) extends LazyLogging {
 
   var eventId: Long = 0
 
-  implicit object WorkItemOrdering extends Ordering[WorkItem] {
-    /** Returns an integer whose sign communicates how x compares to y.
-      *
-      * The result sign has the following meaning:
-      *
-      *  - negative if x < y
-      *  - positive if x > y
-      *  - zero otherwise (if x == y)
-      */
-    def compare(a: WorkItem, b: WorkItem): Int = {
-      //      if (a.time < b.time) -1
-      //      else if (a.time > b.time) 1
-      //      else 0
-      a.time.compare(b.time)
-    }
-  }
-
   protected var curtime: Double = 0.0 // simulation time, in seconds
-  private[this] var _agenda = Vector[WorkItem]()
+//  private[this] var _agenda = Vector[WorkItem]()
+  private[this] var _agenda = mutable.PriorityQueue.empty[WorkItem]
   private[this] var _totalEventsProcessed: Long = 0
+
 
   def removeIf(p: WorkItem => Boolean): Unit = {
     _agenda = _agenda.filterNot(p)
@@ -71,9 +57,9 @@ abstract class Simulator(logging: Boolean = false) extends LazyLogging {
   def run(runTime: Option[Double] = None,
           wallClockTimeout: Option[Double] = None): (Boolean, Double, Long) = {
 
-    afterDelay(-1) {
-      logger.info("*** Simulation started, time = " + currentTime + ". ***")
-    }
+//    afterDelay(0) {
+//      logger.info("*** Simulation started, time = " + currentTime + ". ***")
+//    }
     // Record wall clock time at beginning of simulation run.
     val startWallTime = System.currentTimeMillis()
 
@@ -103,7 +89,8 @@ abstract class Simulator(logging: Boolean = false) extends LazyLogging {
   def afterDelay(delay: Double, eventType: EventType.Value = null, itemId: Long = 0)(block: => Unit) {
     logger.trace("afterDelay() called. delay is " + delay)
     val item = WorkItem(currentTime + delay, () => block, eventType, itemId)
-    _agenda = (_agenda :+ item).sorted
+//    _agenda = (_agenda :+ item).sorted
+    _agenda += item
     logger.trace("Inserted new WorkItem into agenda to run at time " + (currentTime + delay))
   }
 
@@ -112,24 +99,55 @@ abstract class Simulator(logging: Boolean = false) extends LazyLogging {
   private def next(): Double = {
     eventId += 1
     _totalEventsProcessed += 1
-    val item = deqeue()
-    curtime = item.time
-    if (curtime < 0)
-      curtime = 0
+//    val item = dequeue()
+    val item = _agenda.dequeue()
+    assert(item.time >= curtime, {
+      "The time (" + item.time + ") for the next event is lower than the current time (" + curtime + ")"
+    })
+    curtime = if(item.time < 0) 0 else item.time
     logger.trace("Processing event number " + eventId + " (" + item + "). Total events left are: " + agenda.length)
     item.action()
     curtime
   }
 
-  protected def agenda: Vector[WorkItem] = _agenda
+//  protected def agenda: Vector[WorkItem] = _agenda
+  protected def agenda: mutable.PriorityQueue[WorkItem] = _agenda
 
-  def deqeue(): WorkItem = {
-    val item = _agenda.head
-    _agenda = _agenda.filter(_ != item)
-    item
+//  def dequeue(): WorkItem = {
+//    val item = _agenda.head
+//    _agenda = _agenda.filter(_ != item)
+//    item
+//  }
+
+
+
+  implicit object WorkItem extends Ordering[WorkItem] {
+    var _agendaItemCounter: Long = 0
+
+    def apply(time: Double, action: Action, eventType: EventType.Value, eventID: Long): WorkItem = {
+      _agendaItemCounter += 1
+      new WorkItem(_agendaItemCounter, time, action, eventType, eventID)
+    }
+
+    /**
+      * This function compare two WorkItem.
+      * First it will compare the time, then, if the two times are equal, it compared the id
+      * The results will be a PriorityQueue on the WorkItem.time field in Ascending with a FIFO order for the WorkItems
+      * with the same time.
+      *
+      * @param a WorkItem to compare
+      * @param b WorkItem to compare with
+      * @return Int
+      */
+    def compare(a: WorkItem, b: WorkItem): Int = {
+      var ret = b.time.compare(a.time)
+      if(ret == 0)
+        ret = b.id.compare(a.id)
+      ret
+    }
   }
 
-  case class WorkItem(time: Double, action: Action, eventType: EventType.Value, itemId: Long)
+  case class WorkItem(id: Long, time: Double, action: Action, eventType: EventType.Value, eventID: Long)
 
 }
 
@@ -161,12 +179,12 @@ class ClusterSimulator(val cellState: CellState,
                        val schedulers: Map[String, Scheduler],
                        val workloadToSchedulerMap: Map[String, Seq[String]],
                        val workloads: Seq[Workload],
-                       prefillWorkloads: Seq[Workload],
-                       logging: Boolean = false,
-                       monitorQueues: Boolean = true,
-                       monitorAllocation: Boolean = true,
-                       monitorUtilization: Boolean = true,
-                       monitoringPeriod: Double = 1.0,
+                       val prefillWorkloads: Seq[Workload],
+                       val logging: Boolean = false,
+                       val monitorQueues: Boolean = true,
+                       val monitorAllocation: Boolean = true,
+                       val monitorUtilization: Boolean = true,
+                       val monitoringPeriod: Double = 1.0,
                        var prefillScheduler: PrefillScheduler = null)
   extends Simulator(logging) {
   assert(schedulers.nonEmpty, {
@@ -362,7 +380,7 @@ class ClusterSimulator(val cellState: CellState,
       })
     })
     // Start the Allocation monitoring loop.
-    afterDelay(-1) {
+    afterDelay(0) {
       monitoring()
     }
     super.run(runTime, wallClockTimeout)
