@@ -78,11 +78,11 @@ class TraceAllZoeWLGenerator(val workloadName: String,
     // We will fill the workload with the number of job asked
     while (numJobs < jobsPerWorkload) {
       if (nextJobSubmissionTime < timeWindow) {
-        var moldableTasks: Integer = randomNumberGenerator.nextInt(5)
+        var moldableTasks: Option[Int] = Some(randomNumberGenerator.nextInt(5))
         //        if(workloadName.equals("Interactive"))
         //          moldableTasks = randomNumberGenerator.nextInt(3)
         if (allCore)
-          moldableTasks = null
+          moldableTasks = None
         for (_ <- 1 to scaleFactor) {
           val job = newJob(nextJobSubmissionTime, moldableTasks, timeWindow)
           assert(job.workloadName == workload.name)
@@ -112,7 +112,7 @@ class TraceAllZoeWLGenerator(val workloadName: String,
     workload
   }
 
-  def newJob(submissionTime: Double, numMoldableTasks: Integer, timeWindow: Double): Job = {
+  def newJob(submissionTime: Double, numMoldableTasks: Option[Int], timeWindow: Double): Job = {
     // Don't allow jobs with duration 0.
     var dur = 0.0
     while (dur <= 0.0 || dur >= timeWindow * 0.1) {
@@ -146,12 +146,14 @@ class TraceAllZoeWLGenerator(val workloadName: String,
     logger.debug("New Job with " + cpusPerTask + " cpusPerTask and " + memPerTask + " memPerTask")
     val newJob: Job = Job(UniqueIDGenerator.generateUniqueID,
       submissionTime, numTasks, dur, workloadName, cpusPerTask, memPerTask,
-      numCoreTasks = Some(numMoldableTasks), priority = randomNumberGenerator.nextInt(1000),
+      numCoreTasks = numMoldableTasks, priority = randomNumberGenerator.nextInt(1000),
       error = generateError())
 
-    val cpuUtilization = new Array[Long](100)
-    val memUtilization = new Array[Long](100)
-    for (i <- List.range(0, 100)) {
+    val arraySize: Int = newJob.jobDuration.toInt
+
+    val cpuUtilization = new Array[Int](arraySize)
+    val memUtilization = new Array[Long](arraySize)
+    for (i <- List.range(0, arraySize)) {
       var cpuQuantile: Double = DistCache.getQuantile(cpuSlackPerTaskDist, randomNumberGenerator.nextFloat)
       while (cpuQuantile > 1.0) {
         cpuQuantile = DistCache.getQuantile(cpuSlackPerTaskDist, randomNumberGenerator.nextFloat)
@@ -162,7 +164,7 @@ class TraceAllZoeWLGenerator(val workloadName: String,
         memQuantile = DistCache.getQuantile(memSlackPerTaskDist, randomNumberGenerator.nextFloat)
       }
 
-      val _cpu: Long = (cpuQuantile * cpusPerTask).toLong
+      val _cpu: Int = (cpuQuantile * cpusPerTask).toInt
       val _mem: Long = (memQuantile * memPerTask).toLong
 
       assert(_cpu.toDouble <= cpusPerTask, {

@@ -466,16 +466,16 @@ class ZoePreemptionScheduler(name: String,
     o1.machineID.compareTo(o2.machineID)
   }
 
-  def compareJobFinishTime(o1: Job, o2: Job): Int = {
-    if (o1 == null && o2 == null)
-      return 0
-    if (o1 == null)
-      return 1
-    if (o2 == null)
-      return -1
-
-    o1.jobFinishedWorking.compareTo(o2.jobFinishedWorking)
-  }
+//  def compareJobFinishTime(o1: Job, o2: Job): Int = {
+//    if (o1 == null && o2 == null)
+//      return 0
+//    if (o1 == null)
+//      return 1
+//    if (o2 == null)
+//      return -1
+//
+//    o1.jobFinishedWorking.compareTo(o2.jobFinishedWorking)
+//  }
 
   /**
     * Checks to see if there is currently a job in this scheduler's job queue.

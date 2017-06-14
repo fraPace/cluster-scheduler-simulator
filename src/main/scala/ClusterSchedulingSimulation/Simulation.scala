@@ -76,12 +76,13 @@ object Simulation extends LazyLogging {
     val runNewSpark = false
     val runMesos = false
     val runOmega = false
-    val runZoe = true
+    val runZoe = false
     val runZoePreemption = false
     val runZoeDynamic = true
 
     val globalRunTime = 86400.0 * 90 //86400.0 // 1 Day
     val threadSleep = 5
+    val doLogging = false
 
     /**
       * Set up parameter sweeps.
@@ -138,8 +139,6 @@ object Simulation extends LazyLogging {
     val interArrivalScaleRange = lambdaRange.map(1 / _)
 
     val prefillCpuLim = Map("PrefillBatchService" -> 0.6)
-
-    val doLogging = false
 
     val timeout = None // In seconds.
 

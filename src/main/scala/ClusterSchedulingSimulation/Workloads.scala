@@ -44,7 +44,7 @@ object Workloads {
   val scaleFactor = 1
   val introduceError = false
 
-  val workloadSize = 90
+  val workloadSize = 500
 
   val globalNumMachines: Int = 5 * scaleFactor
   val globalCpusPerMachine: Long = 32 * 1000L // value must be in millicores
@@ -54,8 +54,8 @@ object Workloads {
   //  val globalMaxCpusPerTask = 2
   //  val globalMaxMemPerTask = 8
 
-  val globalMaxCpusPerTask: Long = globalCpusPerMachine / 10
-  val globalMaxMemPerTask: Long = globalMemPerMachine / 4
+  val globalMaxCpusPerTask: Long = globalCpusPerMachine / 15
+  val globalMaxMemPerTask: Long = globalMemPerMachine / 5
 
   //  val maxTasksPerJob = ((globalNumMachines * globalCpusPerMachine * 1.5) / globalMaxCpusPerTask).toInt
 
@@ -119,7 +119,7 @@ object Workloads {
       interarrivalTraceFileName, numTasksTraceFileName, jobDurationTraceFileName,
       prefillTraceFileName, cpuSlackTraceFileName, memorySlackTraceFileName,
       maxCpusPerTask = globalMaxCpusPerTask, maxMemPerTask = globalMaxMemPerTask,
-      jobsPerWorkload = (workloadSize * 0.8).toInt, scaleFactor = scaleFactor,
+      jobsPerWorkload = Math.round(workloadSize * 0.8).toInt, scaleFactor = scaleFactor,
       allCore = false, introduceError = introduceError)
 
   val workloadGeneratorTraceAllService =
@@ -127,7 +127,7 @@ object Workloads {
       interarrivalTraceFileName, numTasksTraceFileName, jobDurationTraceFileName,
       prefillTraceFileName,  cpuSlackTraceFileName, memorySlackTraceFileName,
       maxCpusPerTask = globalMaxCpusPerTask, maxMemPerTask = globalMaxMemPerTask,
-      jobsPerWorkload = (workloadSize * 0.2).toInt, scaleFactor = scaleFactor,
+      jobsPerWorkload = Math.round(workloadSize * 0.2).toInt, scaleFactor = scaleFactor,
       allCore = true, introduceError = introduceError)
   //
   //  val workloadGeneratorTraceAllInteractive =

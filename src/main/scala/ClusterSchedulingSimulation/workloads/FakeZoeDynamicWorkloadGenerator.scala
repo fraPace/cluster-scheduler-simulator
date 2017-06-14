@@ -19,8 +19,8 @@ class FakeZoeDynamicWorkloadGenerator(
     assert(timeWindow >= 0)
     val workload = new Workload(workloadName)
 
-    val jobA = Job(1, 0, 0, 6000, workloadName, 100, 137438953472L, numCoreTasks = Option(1))
-    jobA.cpuUtilization = Array.fill(100)(100L)
+    val jobA = Job(1, 0, 0, 100, workloadName, 100, 137438953472L, numCoreTasks = Option(1))
+    jobA.cpuUtilization = Array.fill(100)(100)
     val memoryUtilization = Array(
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
       10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
@@ -37,9 +37,9 @@ class FakeZoeDynamicWorkloadGenerator(
     workload.addJob(jobA)
 
     val jobB = Job(2, 0, 0, 6000, workloadName, 100, 137438953472L / 2, numCoreTasks = Option(1))
-    jobB.cpuUtilization = Array.fill(100)(100L)
+    jobB.cpuUtilization = Array.fill(100)(100)
     jobB.memoryUtilization = memoryUtilization.map(_ * Constant.GiB / 2)
-    workload.addJob(jobB)
+//    workload.addJob(jobB)
 
     workload
   }

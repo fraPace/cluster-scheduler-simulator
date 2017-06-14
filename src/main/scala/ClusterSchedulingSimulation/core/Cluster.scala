@@ -2,6 +2,7 @@ package ClusterSchedulingSimulation.core
 
 import com.typesafe.scalalogging.LazyLogging
 
+import scala.collection.immutable.VectorBuilder
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
@@ -20,14 +21,17 @@ class CellStateDesc(val numMachines: Int,
 class CellState(val numMachines: Int,
                 val cpusPerMachine: Long,
                 val memPerMachine: Long,
-                val conflictMode: String,
+                val conflictMode: String = "None",
                 val transactionMode: String) extends LazyLogging {
-  assert(conflictMode.equals("resource-fit") || conflictMode.equals("sequence-numbers"), {
+  assert(conflictMode.equals("resource-fit") || conflictMode.equals("sequence-numbers") || conflictMode.equals("None"), {
     "conflictMode must be one of: {'resource-fit', 'sequence-numbers'}, but it was " + conflictMode
   })
   assert(transactionMode.equals("all-or-nothing") || transactionMode.equals("incremental"), {
     "transactionMode must be one of: {'all-or-nothing', 'incremental'}, but it was " + transactionMode
   })
+
+  // Data Structure used to consistency check in the code flow
+  val claimDeltas: mutable.HashSet[ClaimDelta] = mutable.HashSet[ClaimDelta]()
 
   // An array where value at position k is the total CPUs that have been
   // allocated for machine k.
@@ -62,32 +66,42 @@ class CellState(val numMachines: Int,
     claimDeltasPerMachine(i) =  Vector[ClaimDelta]()
   }
 
-  def totalCpuUtilization(): Long = {
-    var _sum: Long = 0L
-    for (i <- 0 until numMachines){
-      claimDeltasPerMachine(i).foreach(claimDelta => {
+  def cpuAvgUtilization(): Float = {
+    var _sum: Long = 0
+    var i: Int = 0
+    while (i < numMachines){
+      var j: Int = 0
+      while(j < claimDeltasPerMachine(i).length){
+        val claimDelta: ClaimDelta = claimDeltasPerMachine(i)(j)
         claimDelta.job match {
           case Some(param) =>
             _sum += param.cpuUtilization(simulator.currentTime)
           case None => None
         }
-      })
+        j += 1
+      }
+      i += 1
     }
-    _sum
+    _sum / totalCpus.toFloat
   }
 
-  def totalMemoryUtilization(): Long = {
+  def memoryAvgUtilization(): Float= {
     var _sum: Long = 0
-    for (i <- 0 until numMachines) {
-      claimDeltasPerMachine(i).foreach(claimDelta => {
+    var i: Int = 0
+    while (i < numMachines){
+      var j: Int = 0
+      while(j < claimDeltasPerMachine(i).length){
+        val claimDelta: ClaimDelta = claimDeltasPerMachine(i)(j)
         claimDelta.job match {
           case Some(param) =>
             _sum += param.memoryUtilization(simulator.currentTime)
           case None => None
         }
-      })
+        j += 1
+      }
+      i += 1
     }
-    _sum
+    _sum / totalMem.toFloat
   }
 
 //  def isFull: Boolean = availableCpus.floor <= 0 || availableMem.floor <= 0
@@ -321,7 +335,7 @@ class CellState(val numMachines: Int,
       if (realDelay > maxDelay) maxDelay = realDelay
       simulator.afterDelay(realDelay, eventType = EventType.Remove, itemId = job.id) {
         appliedDelta.unApply(simulator.cellState)
-        simulator.logger.info(appliedDelta.scheduler.loggerPrefix + jobPrefix + " A task finished. Freeing " +
+        simulator.logger.info(appliedDelta.scheduler.loggerPrefix + jobPrefix + " A task finished after " + realDelay + "s. Freeing " +
           appliedDelta.currentCpus + " CPUs, " + appliedDelta.currentMem + " mem. Available: " + availableCpus + " CPUs, " + availableMem + " mem.")
       }
     })
@@ -360,6 +374,7 @@ class CellState(val numMachines: Int,
         } else {
           false
         }
+      case "None" => false
       case _ =>
         simulator.logger.error("Unrecognized conflictMode " + conflictMode)
         true // Should never be reached.

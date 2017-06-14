@@ -33,7 +33,7 @@ import ClusterSchedulingSimulation.core._
 import com.typesafe.scalalogging.LazyLogging
 
 import scala.collection.mutable.ListBuffer
-import scala.collection.{Iterator, mutable}
+import scala.collection.mutable
 
 /* This class and its subclasses are used by factory method
  * ClusterSimulator.newScheduler() to determine which type of Simulator
@@ -114,83 +114,34 @@ class ZoeScheduler(name: String,
   logger.debug("scheduler-id-info: " + Thread.currentThread().getId + ", " + name + ", " + hashCode() + ", " + constantThinkTimes.mkString(";")
     + ", " + perTaskThinkTimes.mkString(";"))
   
-  var pendingQueueAsList = new ListBuffer[Job]()
-  var numJobsInQueue: Int = 0
+  var pendingQueueAsList: mutable.HashSet[Job] = mutable.HashSet[Job]()
 
-  var runningQueueAsList = new ListBuffer[Job]()
-  var numRunningJobs: Int = 0
+  var runningQueueAsList: mutable.HashSet[Job] = mutable.HashSet[Job]()
+
   var jobAttempt: Int = 0
   var privateCellState: CellState = _
   var firstTime = true
+  val enableCellStateSnapshot: Boolean = true
 
-  override def jobQueueSize: Long = pendingQueueAsList.count(_ != null)
+  override def jobQueueSize: Long = pendingQueueAsList.size
 
-  //  var previousJob: Job = _
-
-  override def runningJobQueueSize: Long = runningQueueAsList.count(_ != null)
-
-  def getJobs(queue: ListBuffer[Job], currentTime: Double): ListBuffer[Job] = {
-    //    val jobs = PolicyModes.getJobsWithSamePriority(queue, policyMode, currentTime)
-    val jobs = PolicyModes.getJobs(queue, policyMode)
-    //    jobs.foreach(job => {
-    //      removePendingJob(job)
-    //    })
-    jobs
-  }
-
-  /**
-    * This function gives the next job in the queue
-    *
-    * @param iterator the iterator of the queue
-    * @return A tuple with:
-    *         the next job in the queue or null if the end of the queue has been reached
-    *         a counter with the number of elements skipped
-    */
-  def getNextJobInQueue(iterator: Iterator[Job]): (Job, Long) = {
-    var elementsSkipped: Long = 0
-    while (iterator.hasNext) {
-      val result = iterator.next()
-      if (result != null)
-        return (result, elementsSkipped)
-      elementsSkipped += 1
-    }
-    (null, elementsSkipped)
-  }
+  override def runningJobQueueSize: Long = runningQueueAsList.size
 
   def removePendingJob(job: Job): Unit = {
-    val idx = pendingQueueAsList.indexOf(job)
-    if (idx != -1 && pendingQueueAsList(idx) != null) {
-      numJobsInQueue -= 1
-      pendingQueueAsList(idx) = null
-    }
+    pendingQueueAsList -= job
   }
 
   def removeRunningJob(job: Job): Unit = {
-    val idx = runningQueueAsList.indexOf(job)
-    if (idx != -1 && runningQueueAsList(idx) != null) {
-      numRunningJobs -= 1
-      runningQueueAsList(idx) = null
-    }
+    val originalSize: Int = runningQueueAsList.size
+    runningQueueAsList -= job
+    assert(originalSize - 1 == runningQueueAsList.size)
   }
 
-  def addPendingJob(job: Job, prepend: Boolean = false): Unit = {
-    numJobsInQueue += 1
-    if (!prepend)
-      pendingQueueAsList += job
-    else
-      pendingQueueAsList.prepend(job)
-  }
-
-  def addPendingJobs(jobs: ListBuffer[Job], prepend: Boolean = false): Unit = {
-    numJobsInQueue += jobs.length
-    if (!prepend)
-      pendingQueueAsList ++= jobs
-    else
-      pendingQueueAsList.prependAll(jobs)
+  def addPendingJob(job: Job): Unit = {
+    pendingQueueAsList += job
   }
 
   def addRunningJob(job: Job): Unit = {
-    numRunningJobs += 1
     runningQueueAsList += job
   }
 
@@ -225,7 +176,7 @@ class ZoeScheduler(name: String,
     //    simulator.logger.warn("%f - Added a new Job (%s) in the queue. Num Tasks: %d (%d/%d) | Cpus: %f | Mem: %f | Job Runtime: %f"
     //      .format(simulator.currentTime, job.workloadName, job.numTasks, job.moldableTasks, job.elasticTasks, job.cpusPerTask, job.memPerTask, job.jobDuration ))
 //    if (firstTime) {
-//      if (numJobsInQueue == 3) {
+//      if (jobQueueSize == 3) {
 //        wakeUp()
 //        firstTime = false
 //      }
@@ -243,38 +194,29 @@ class ZoeScheduler(name: String,
     */
   def scheduleNextJob(): Unit = {
     if (!scheduling) {
-      val jobCompleted: ListBuffer[Job] = new ListBuffer[Job]()
-      pendingQueueAsList.foreach(job => {
-        if (job != null && job.finalStatus == JobStatus.Completed) {
-          jobCompleted += job
-        }
-      })
-      jobCompleted.foreach(job => {
-        // Remove the Job from the pending queue and running queue, if it was present.
-        removePendingJob(job)
-        removeRunningJob(job)
-      })
-      if (numJobsInQueue > 0) {
+      // Remove the Job from the pending queue and running queue, if it was present.
+      pendingQueueAsList = pendingQueueAsList.filter(_.finalStatus != JobStatus.Completed)
+      runningQueueAsList = runningQueueAsList.filter(_.finalStatus != JobStatus.Completed)
+
+      if (jobQueueSize > 0) {
         scheduling = true
 
-        simulator.logger.info(loggerPrefix + " There are " + numJobsInQueue + " jobs in queue and " + numRunningJobs + " running.")
+        simulator.logger.info(loggerPrefix + " There are " + jobQueueSize + " jobs in queue and " + runningJobQueueSize + " running.")
         simulator.logger.info(loggerPrefix + " The global cell state is (" + simulator.cellState.availableCpus + " CPUs, " + simulator.cellState.availableMem + " mem)")
 
-        val jobsToAttemptScheduling: ListBuffer[Job] = getJobs(pendingQueueAsList, simulator.currentTime)
+        val jobsToAttemptScheduling: ListBuffer[Job] = PolicyModes.getJobs(pendingQueueAsList, policyMode, simulator.currentTime)
         if (policyMode == PolicyModes.Fifo || policyMode == PolicyModes.eFifo)
           assert(jobsToAttemptScheduling.length == 1, {
             "For Fifo and eFifo policy the jobsToAttemptScheduling length must be 1 (" + jobsToAttemptScheduling.length + ")"
           })
-        //        if(PolicyModes.myPolicies.contains(policyMode)){
-        //          if (jobsToAttemptScheduling.size > 1)
-        //            jobsToAttemptScheduling = jobsToAttemptScheduling.sortWith(_.numTasks > _.numTasks)
-        //        }
 
-        totalQueueSize += numJobsInQueue
+        totalQueueSize += jobQueueSize
         numSchedulingCalls += 1
 
-        syncCellState()
-        simulator.logger.info(loggerPrefix + " The private cell state is (" + privateCellState.availableCpus + " CPUs, " + privateCellState.availableMem + " mem)")
+        if(enableCellStateSnapshot){
+          syncCellState()
+          simulator.logger.info(loggerPrefix + " The private cell state is (" + privateCellState.availableCpus + " CPUs, " + privateCellState.availableMem + " mem)")
+        }
 
         val jobThinkTime: Double = jobsToAttemptScheduling.map(getThinkTime).sum
         lazy val allJobPrefix = "[" + jobsToAttemptScheduling.length + " | Job" + jobsToAttemptScheduling.foldLeft("")((b, a) => b + " " + a.id + " (" + a.workloadName + ")") + "]"
@@ -283,6 +225,12 @@ class ZoeScheduler(name: String,
         simulator.logger.info(loggerPrefix + allJobPrefix + " Started " + jobThinkTime + " seconds of scheduling thinktime.")
         simulator.afterDelay(jobThinkTime) {
           simulator.logger.info(loggerPrefix + allJobPrefix + " Finished " + jobThinkTime + " seconds of scheduling thinktime.")
+
+          // This is in case we disable the creation of the snapshot for the cellState
+          // Good option when using more complex algorithm that have another "process" or loop that modify the resources in the cellState
+          if(!enableCellStateSnapshot){
+            syncCellState()
+          }
 
           /*
            * Let's perform a simulation of the jobs, with the same priority, that could be allocated on the cluster
@@ -315,8 +263,11 @@ class ZoeScheduler(name: String,
                   elastic.clear()
                 }
 
-                val isJobRunning = runningQueueAsList.contains(job)
-                if (!isJobRunning) {
+                if(runningQueueAsList.contains(job) && job.coreTasksUnscheduled != 0){
+                  simulator.logger.warn("How can the job be in the running list and have a coreTasksUnscheduled different than 0 (" + job.coreTasksUnscheduled + ")")
+                }
+
+                if (job.coreTasksUnscheduled != 0) {
                   // If the job is not already running, try to scheduled it
                   claimDelta_core = scheduleJob(job, privateCellState, taskType = TaskType.Core)
                   // Check if the core components that can be scheduled satisfy the allocation policy of this scheduler
@@ -328,7 +279,7 @@ class ZoeScheduler(name: String,
                 }
                 // If we succeeded in scheduling the core components or if the job is already running
                 //    try to schedule the as many elastic components as we can for the jobs in the list
-                if (claimDelta_core.nonEmpty || isJobRunning) {
+                if (claimDelta_core.nonEmpty || job.coreTasksUnscheduled == 0) {
                   jobsToLaunch += ((job, claimDelta_core, claimDelta_elastic))
                 }
                 jobsToLaunch.foreach { case (job1, _, elastic) =>
@@ -357,8 +308,6 @@ class ZoeScheduler(name: String,
                 claimDelta_elastic = scheduleJob(job, privateCellState, taskType = TaskType.Elastic)
               if (claimDelta_core.nonEmpty || claimDelta_elastic.nonEmpty)
                 jobsToLaunch += ((job, claimDelta_core, claimDelta_elastic))
-//                simulator.logger.info(loggerPrefix + job.loggerPrefix + " The cellstate now have (%f cpu, %f mem) free."
-//                  .format(privateCellState.availableCpus, privateCellState.availableMem))
               val taskCanFitPerCpus = Math.floor(privateCellState.cpusPerMachine.toDouble / job.cpusPerTask.toDouble) * privateCellState.numMachines
               val taskCanFitPerMem = Math.floor(privateCellState.memPerMachine.toDouble / job.memPerTask) * privateCellState.numMachines
               if (taskCanFitPerCpus < job.numTasks || taskCanFitPerMem < job.numTasks) {
@@ -406,21 +355,13 @@ class ZoeScheduler(name: String,
           simulator.logger.info(loggerPrefix + allJobPrefix + " There are " + jobsToLaunch.size + " jobs that can be allocated.")
           var serviceDeployed = 0
           jobsToLaunch.foreach { case (job, inelastic, elastic) =>
-//            var inelasticTasksUnscheduled: Int = job.tasksUnscheduled
-//            var elasticTasksUnscheduled: Int = job.elasticTasksUnscheduled
-
             if (!runningQueueAsList.contains(job)) {
-              //              job.numTaskSchedulingAttempts += inelasticTasksUnscheduled
               if (inelastic.nonEmpty) {
                 val commitResult = simulator.cellState.commit(inelastic)
                 if (commitResult.committedDeltas.nonEmpty) {
-                  //                  recordUsefulTimeScheduling(job, getThinkTime(job), job.numSchedulingAttempts == 1)
                   serviceDeployed += commitResult.committedDeltas.size
 
-//                  inelasticTasksUnscheduled -= commitResult.committedDeltas.size
                   job.addCoreClaimDeltas(commitResult.committedDeltas)
-//                  job.tasksUnscheduled = inelasticTasksUnscheduled
-                  //                  numSuccessfulTransactions += 1
                   job.finalStatus = JobStatus.Partially_Scheduled
 
                   if (job.firstScheduled) {
@@ -430,26 +371,20 @@ class ZoeScheduler(name: String,
 
                   simulator.logger.info(loggerPrefix + job.loggerPrefix + " Scheduled " + inelastic.size + " tasks, " + job.coreTasksUnscheduled + " remaining.")
                 } else {
-                  //                  numFailedTransactions += 1
-                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " There was a conflict when committing the task allocation to the real cell.")
-                  //                  recordWastedTimeScheduling(job, getThinkTime(job), job.numSchedulingAttempts == 1)
+                  simulator.logger.warn(loggerPrefix + job.loggerPrefix + " There was a conflict when committing the task allocation to the real cell.")
                 }
               } else {
-                //                recordWastedTimeScheduling(job, getThinkTime(job), job.numSchedulingAttempts == 1)
-                //                numNoResourcesFoundSchedulingAttempts += 1
-
                 simulator.logger.info(loggerPrefix + job.loggerPrefix + " No tasks scheduled (" + job.cpusPerTask +
                   " cpu " + job.memPerTask + "mem per task) during this scheduling attempt, recording wasted time.")
               }
               if (job.coreTasksUnscheduled == 0) {
                 job.jobStartedWorking = simulator.currentTime
                 val jobDuration: Double = job.estimateJobDuration(simulator.currentTime)
-                job.jobFinishedWorking = simulator.currentTime + jobDuration
 
                 simulator.afterDelay(jobDuration, eventType = EventType.Remove, itemId = job.id) {
                   simulator.logger.info(loggerPrefix + job.loggerPrefix + " Completed after " + (simulator.currentTime - job.jobStartedWorking) + "s. It had " + job.claimDeltas.size + " tasks allocated.")
                   job.finalStatus = JobStatus.Completed
-                  //                  previousJob = null
+                  job.jobFinishedWorking = simulator.currentTime
                   removePendingJob(job)
                   removeRunningJob(job)
                 }
@@ -472,38 +407,29 @@ class ZoeScheduler(name: String,
 
             if (job.finalStatus == JobStatus.Completed) {
               simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Finished during the thinking time. Do not process it.")
-            } else if (job.elasticTasksUnscheduled > 0) {
+            } else
+            // We check if all core task are schedule to prevent to schedule elastic tasks if we had a previous conflict with core tasks
+            if (job.coreTasksUnscheduled == 0 && job.elasticTasksUnscheduled > 0) {
               var elasticTasksLaunched = 0
               if (elastic.nonEmpty) {
                 val commitResult = simulator.cellState.commit(elastic)
                 if (commitResult.committedDeltas.nonEmpty) {
-                  //                  recordUsefulTimeScheduling(job, getThinkTime(job), job.numSchedulingAttempts == 1)
                   serviceDeployed += commitResult.committedDeltas.size
 
                   elasticTasksLaunched = commitResult.committedDeltas.size
-//                  elasticTasksUnscheduled -= elasticTasksLaunched
-                  job.addElasticClaimDeltas(commitResult.committedDeltas)
-//                  job.elasticTasksUnscheduled = elasticTasksUnscheduled
-                  //                  numSuccessfulTransactions += 1
+                  val elasticTasksAdded = job.addElasticClaimDeltas(commitResult.committedDeltas)
+                  assert(elasticTasksAdded == elasticTasksLaunched)
 
                   simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Scheduled " + elasticTasksLaunched + " tasks, " + job.elasticTasksUnscheduled + " remaining.")
                 } else {
-                  //                  numFailedTransactions += 1
                   simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " There was a conflict when committing the task allocation to the real cell.")
-                  //                  recordWastedTimeScheduling(job, getThinkTime(job), job.numSchedulingAttempts == 1)
                 }
-
               } else if (job.elasticTasks > 0) {
-                //                recordWastedTimeScheduling(job, getThinkTime(job), job.numSchedulingAttempts == 1)
-                //                numNoResourcesFoundSchedulingAttempts += 1
-
                 simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " No tasks scheduled (" + job.cpusPerTask + " cpu " + job.memPerTask +
                   " mem per task) during this scheduling attempt, recording wasted time. " + job.elasticTasksUnscheduled + " unscheduled tasks remaining.")
               }
               if (elasticTasksLaunched > 0) {
                 val jobLeftDuration: Double = job.estimateJobDuration(currTime = simulator.currentTime, newTasksAllocated = elasticTasksLaunched)
-
-                job.jobFinishedWorking = simulator.currentTime + jobLeftDuration
 
                 // We have to remove all the incoming simulation events that work on this job.
                 simulator.removeIf(x => x.eventID == job.id &&
@@ -512,7 +438,7 @@ class ZoeScheduler(name: String,
                 simulator.afterDelay(jobLeftDuration, eventType = EventType.Remove, itemId = job.id) {
                   simulator.logger.info(loggerPrefix + job.loggerPrefix + " Completed after " + (simulator.currentTime - job.jobStartedWorking) + "s. It had " + job.claimDeltas.size + " tasks allocated.")
                   job.finalStatus = JobStatus.Completed
-                  //                  previousJob = null
+                  job.jobFinishedWorking = simulator.currentTime
                   removePendingJob(job)
                   removeRunningJob(job)
                 }
@@ -581,18 +507,11 @@ object PolicyModes extends Enumeration with LazyLogging {
     PolicyModes.hFifo, PolicyModes.eFifo, PolicyModes.Fifo
   )
 
-  def getJobs(queue: ListBuffer[Job], policy: PolicyModes.Value): ListBuffer[Job] = {
-    val sortedQueue = applyPolicy(queue, policy)
-    val jobs: ListBuffer[Job] = new ListBuffer[Job]()
-
-    for (job: Job <- sortedQueue) {
-      if (job != null) {
-        jobs += job
-        if (!myPolicies.contains(policy))
-          return jobs
-      }
-    }
-    jobs
+  def getJobs(queue: mutable.HashSet[Job], policy: PolicyModes.Value, currentTime: Double = 0): ListBuffer[Job] = {
+    val sortedQueue = applyPolicy(ListBuffer[Job]() ++ queue, policy, currentTime = currentTime)
+    if (!myPolicies.contains(policy) && sortedQueue.nonEmpty)
+      return ListBuffer[Job](sortedQueue.head)
+    sortedQueue
   }
 
   def applyPolicy(queue: ListBuffer[Job], policy: PolicyModes.Value, currentTime: Double = 0): ListBuffer[Job] = {
@@ -600,7 +519,7 @@ object PolicyModes extends Enumeration with LazyLogging {
       case PolicyModes.PriorityFifo => queue.sortWith(PolicyModes.comparePriority(_, _) > 0)
       case PolicyModes.LJF => queue.sortWith(PolicyModes.compareJobTime(_, _) > 0)
 
-      case PolicyModes.Fifo | PolicyModes.hFifo | PolicyModes.eFifo => queue
+      case PolicyModes.Fifo | PolicyModes.hFifo | PolicyModes.eFifo => queue.sortWith(PolicyModes.compareArrivalTime(_, _) < 0)
       case PolicyModes.PSJF | PolicyModes.hPSJF | PolicyModes.ePSJF => queue.sortWith(PolicyModes.compareJobTime(_, _) < 0)
       case PolicyModes.HRRN | PolicyModes.hHRRN | PolicyModes.eHRRN => queue.sortWith(PolicyModes.compareResponseRatio(_, _, currentTime) < 0)
       case PolicyModes.SRPT | PolicyModes.hSRPT | PolicyModes.eSRPT => queue.sortWith(PolicyModes.compareJobRemainingTime(_, _) < 0)
@@ -623,6 +542,20 @@ object PolicyModes extends Enumeration with LazyLogging {
     if (o2 == null)
       return -1
     o1.priority.compareTo(o2.priority)
+  }
+
+  def compareArrivalTime(o1: Job, o2: Job): Int = {
+    if (o1 == null && o2 == null)
+      return 0
+    if (o1 == null)
+      return 1
+    if (o2 == null)
+      return -1
+    o1.submitted.compareTo(o2.submitted)
+  }
+
+  def arrivalTime(job: Job): Double = {
+    job.submitted * job.sizeAdjustment * job.error
   }
 
   def compareJobTime(o1: Job, o2: Job): Int = {
@@ -798,7 +731,7 @@ object PolicyModes extends Enumeration with LazyLogging {
     policy match {
       case PolicyModes.PriorityFifo => job.priority
 
-      case PolicyModes.Fifo | PolicyModes.hFifo | PolicyModes.eFifo => -1.0
+      case PolicyModes.Fifo | PolicyModes.hFifo | PolicyModes.eFifo => job.submitted
       case PolicyModes.PSJF | PolicyModes.hPSJF | PolicyModes.LJF | PolicyModes.ePSJF => jobDuration(job)
       case PolicyModes.HRRN | PolicyModes.hHRRN | PolicyModes.eHRRN => responseRatio(job, currentTime)
       case PolicyModes.SRPT | PolicyModes.hSRPT | PolicyModes.eSRPT => remainingTime(job)
@@ -838,33 +771,4 @@ object PolicyModes extends Enumeration with LazyLogging {
     }
     jobs
   }
-
-
-  //  def compareJobRemainingTimeWithError(o1: Job, o2: Job): Int = {
-  //    if (o1 == null && o2 == null)
-  //      return 0
-  //    if (o1 == null)
-  //      return 1
-  //    if (o2 == null)
-  //      return -1
-  //    remainingTimeWithError(o1).compareTo(remainingTimeWithError(o2))
-  //  }
-
-  //  def compareSizeWithError(o1: Job, o2: Job): Int = {
-  //    if (o1 == null && o2 == null)
-  //      return 0
-  //    if (o1 == null)
-  //      return 1
-  //    if (o2 == null)
-  //      return -1
-  //    sizeWithError(o1).compareTo(sizeWithError(o2))
-  //  }
-
-  //  def remainingTimeWithError(job: Job): Double = {
-  //    job.remainingTime * job.sizeAdjustment * job.error
-  //  }
-  //
-  //  def sizeWithError(job:Job): Double = {
-  //    job.remainingTime * job.numTasks * job.sizeAdjustment * job.error
-  //  }
 }

@@ -277,7 +277,7 @@ class SparkScheduler(name: String,
         assert(currMachID >= 0 && currMachID < cellState.machineSeqNums.length)
         val locked = if (job.tasksUnscheduled > 0) false else true
 
-        val claimDelta = new ClaimDelta(this,
+        val claimDelta = ClaimDelta(this,
           currMachID,
           cellState.machineSeqNums(currMachID),
           job.taskDuration,

@@ -50,6 +50,8 @@ object ClaimDelta {
     }
   }
 
+  var uniqueId: Long = 0
+
   def apply(
              scheduler: Scheduler,
              machineID: Int,
@@ -60,10 +62,15 @@ object ClaimDelta {
              onlyLocked: Boolean = false,
              job: Option[Job] = None,
              taskType: TaskType.Value = TaskType.None
-           ): ClaimDelta = new ClaimDelta(scheduler, machineID, machineSeqNum, duration, requestedCpus, requestedMem, onlyLocked, job, taskType)
+           ): ClaimDelta = {
+    uniqueId += 1
+    new ClaimDelta(uniqueId, scheduler, machineID, machineSeqNum, duration, requestedCpus, requestedMem, onlyLocked, job, taskType, scheduler.simulator.currentTime)
+  }
+
 }
 
-class ClaimDelta(val scheduler: Scheduler,
+class ClaimDelta(val id: Long,
+                 val scheduler: Scheduler,
                  val machineID: Int,
                  val machineSeqNum: Long,
                  val duration: Double,
@@ -71,7 +78,11 @@ class ClaimDelta(val scheduler: Scheduler,
                  val requestedMem: Long,
                  val onlyLocked: Boolean = false,
                  val job: Option[Job] = None,
-                 val taskType: TaskType.Value = TaskType.None) extends LazyLogging {
+                 val taskType: TaskType.Value = TaskType.None,
+                 val creationTime: Double = 0) extends LazyLogging {
+  assert(creationTime >= 0, {
+    "The creation time for the claimDelta cannot be negative. " + creationTime + "s."
+  })
   var currentCpus: Long = requestedCpus
   var currentMem: Long = requestedMem
   var status: ClaimDeltaStatus.Value = ClaimDeltaStatus.Starting
@@ -87,6 +98,10 @@ class ClaimDelta(val scheduler: Scheduler,
     * by machineID.
     */
   def apply(cellState: CellState, locked: Boolean = false): Unit = {
+    assert(cellState.claimDeltas.add(this), {
+       "We already added this claimDelta! (" + this.id + ")"
+    })
+
     cellState.assignResources(scheduler, machineID, currentCpus, currentMem, locked)
     // Mark that the machine has changed, used for testing for conflicts
     // when using optimistic concurrency.
@@ -96,6 +111,10 @@ class ClaimDelta(val scheduler: Scheduler,
   }
 
   def unApply(cellState: CellState, locked: Boolean = false): Unit = {
+    assert(cellState.claimDeltas.remove(this), {
+      "We are removing a claimDelta that was not in the system! (" + this.id + ")"
+    })
+
     cellState.freeResources(scheduler, machineID, currentCpus, currentMem, onlyLocked || locked)
     status = ClaimDeltaStatus.Dead
     cellState.claimDeltasPerMachine(machineID) = cellState.claimDeltasPerMachine(machineID).filter(_ != this)
@@ -107,14 +126,14 @@ class ClaimDelta(val scheduler: Scheduler,
 
   def checkResourcesLimits(cpus: Long, mem: Long): ClaimDeltaStatus.Value = {
     if (currentCpus < cpus) {
-      scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A cell on machine " + machineID +
+      scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A claimDelta on machine " + machineID +
         " is using more CPUs than allocated. Originally Requested: " + requestedCpus + " Allocated: " +
         currentCpus + " Current: " + cpus)
       status = ClaimDeltaStatus.CPUKilled
     }
 
     if (currentMem < mem) {
-      scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A cell on machine " + machineID +
+      scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A claimDelta on machine " + machineID +
         " is using more memory than allocated. Originally Requested: " + requestedMem + " Allocated: " +
         currentMem + " Current: " + mem)
       status = ClaimDeltaStatus.OOMKilled
@@ -122,85 +141,92 @@ class ClaimDelta(val scheduler: Scheduler,
     status
   }
 
+  def calculateNextAllocations(cpus: Long, mem: Long, resizePolicy: ResizePolicy): (Long, Long) = {
+    var deltaCpus: Long =
+      if(resizePolicy != ClaimDelta.ResizePolicy.None)
+        (ClaimDelta.ResizePolicy.calculate(cpusUtilization, cpus, resizePolicy) * (1 + ClaimDelta.ResizePolicy.SafeMargin)).toLong - currentCpus
+      else 0
+    if (deltaCpus > 0) {
+      deltaCpus += (deltaCpus * ClaimDelta.ResizePolicy.IncreaseRatio).toLong
+      // Enforce limitations imposed by the user allocation request
+      if(deltaCpus + currentCpus >= requestedCpus)
+        deltaCpus = requestedCpus - currentCpus
+    } else if (deltaCpus < 0){
+      // Negative value
+      deltaCpus -= (deltaCpus * (1 - ClaimDelta.ResizePolicy.DecreaseRatio)).toLong
+    }
+
+    var deltaMem =
+      if(resizePolicy != ClaimDelta.ResizePolicy.None)
+        (ClaimDelta.ResizePolicy.calculate(memUtilization, mem, resizePolicy) * (1 + ClaimDelta.ResizePolicy.SafeMargin)).toLong - currentMem
+      else 0
+    if (deltaMem > 0) {
+      deltaMem += (deltaMem * ClaimDelta.ResizePolicy.IncreaseRatio).toLong
+      // Enforce limitations imposed by the user allocation request
+      if(deltaMem + currentMem > requestedMem)
+        deltaMem = requestedMem - currentMem
+    } else if(deltaMem < 0){
+      // Negative value
+      deltaMem -= (deltaMem * (1 - ClaimDelta.ResizePolicy.DecreaseRatio)).toLong
+    }
+    (currentCpus + deltaCpus, currentMem + deltaMem)
+  }
+
   def resize(cellState: CellState, cpus: Long, mem: Long, locked: Boolean = false, resizePolicy: ResizePolicy): (Long, Long) = {
-//    logger.info("Resizing a cell from " + currentCpus + " CPUs and " + currentMem + " memory to " + cpus +
-//      " CPUs and " + mem + " Memory. The status is " + status + " and the resize policy is " + ClaimDelta.resizePolicy)
-    scheduler.simulator.logger.info(scheduler.loggerPrefix + " Resizing a cell from " + currentCpus + " CPUs and %.2fGiB".format(currentMem / Constant.GiB.toDouble) +
+    scheduler.simulator.logger.debug(scheduler.loggerPrefix + " Resizing a claimDelta from " + currentCpus + " CPUs and %.2fGiB".format(currentMem / Constant.GiB.toDouble) +
       " memory to " + cpus + " CPUs and %.2fGiB".format(mem / Constant.GiB.toDouble) + " Memory. The status is " +
       status + " and the resize policy is " + resizePolicy)
 
     status = ClaimDeltaStatus.Running
+    cpusStillNeeded = 0L
+    memStillNeeded = 0L
 
-    var valueCpu: Long =
+    var deltaCpus: Long =
       if(resizePolicy != ClaimDelta.ResizePolicy.None)
-        (ClaimDelta.ResizePolicy.calculate(cpusUtilization, cpus, resizePolicy) * (1 + ClaimDelta.ResizePolicy.SafeMargin) - currentCpus).toLong
+        cpus - currentCpus
       else 0
-    if (valueCpu > 0) {
-      valueCpu += (valueCpu * ClaimDelta.ResizePolicy.IncreaseRatio).toLong
-      // Enforce limitations imposed by the user allocation request
-      if(valueCpu + currentCpus >= requestedCpus)
-        valueCpu = requestedCpus - currentCpus
-
-      if(valueCpu > 0){
-        if (cellState.availableCpusPerMachine(machineID) >= valueCpu) {
-          cellState.assignResources(scheduler, machineID, valueCpu, 0L, locked)
-        }
-        else {
-          scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A cell on machine " + machineID +
-            " may crash because there are not enough CPUs to allocate. Originally Requested: " +
-            requestedCpus + " Allocated: "+ currentCpus + " Current: " + cpus + " Slack: " + valueCpu)
-          status = ClaimDeltaStatus.CPURisk
-          cpusStillNeeded = valueCpu
-          valueCpu = 0
-        }
+    if (deltaCpus > 0) {
+      if (cellState.availableCpusPerMachine(machineID) >= deltaCpus) {
+        cellState.assignResources(scheduler, machineID, deltaCpus, 0L, locked)
       }
-    } else if (valueCpu < 0){
-      // Negative value
-      valueCpu -= (valueCpu * (1 - ClaimDelta.ResizePolicy.DecreaseRatio)).toLong
-      if (valueCpu < 0) {
-        cellState.freeResources(scheduler, machineID, -valueCpu, 0L, locked)
+      else {
+        scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A claimDelta on machine " + machineID +
+          " may crash because there are not enough CPUs to allocate. Originally Requested: " +
+          requestedCpus + " Allocated: "+ currentCpus + " Current Requested: " + cpus + " Slack: " + deltaCpus)
+        status = ClaimDeltaStatus.CPURisk
+        cpusStillNeeded = deltaCpus
+        deltaCpus = 0
       }
+    } else if (deltaCpus < 0){
+      cellState.freeResources(scheduler, machineID, -deltaCpus, 0L, locked)
     }
-    currentCpus += valueCpu
+    currentCpus += deltaCpus
 
-    var valueMem =
+    var deltaMem =
       if(resizePolicy != ClaimDelta.ResizePolicy.None)
-        (ClaimDelta.ResizePolicy.calculate(memUtilization, mem, resizePolicy) * (1 + ClaimDelta.ResizePolicy.SafeMargin) - currentMem).toLong
+        mem - currentMem
       else 0
-    if (valueMem > 0) {
-      valueMem += (valueMem * ClaimDelta.ResizePolicy.IncreaseRatio).toLong
-      // Enforce limitations imposed by the user allocation request
-      if(valueMem + currentMem > requestedMem)
-        valueMem = requestedMem - currentMem
-
-      if(valueMem > 0){
-        if (cellState.availableMemPerMachine(machineID) >= valueMem) {
-          cellState.assignResources(scheduler, machineID, 0, valueMem, locked)
-        }
-        else {
-          scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A cell on machine " + machineID +
-            " may crash because there are not enough memory to allocate. Originally Requested: " +
-            requestedMem + " Allocated: "+ currentMem + " Current: " + mem + " Slack: " + valueMem)
-          status = ClaimDeltaStatus.OOMRisk
-          memStillNeeded = valueMem
-          valueMem = 0
-        }
+    if (deltaMem > 0) {
+      if (cellState.availableMemPerMachine(machineID) >= deltaMem) {
+        cellState.assignResources(scheduler, machineID, 0, deltaMem, locked)
       }
-    } else if(valueMem < 0){
-      // Negative value
-      valueMem -= (valueMem * (1 - ClaimDelta.ResizePolicy.DecreaseRatio)).toLong
-      if (valueMem < 0) {
-        //        logger.warn("Cell Memory allocation decreased by " + value)
-        cellState.freeResources(scheduler, machineID, 0, -valueMem, locked)
+      else {
+        scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A claimDelta on machine " + machineID +
+          " may crash because there are not enough memory to allocate. Originally Requested: " +
+          requestedMem + " Allocated: "+ currentMem + " Current Requested: " + mem + " Slack: " + deltaMem)
+        status = ClaimDeltaStatus.OOMRisk
+        memStillNeeded = deltaMem
+        deltaMem = 0
       }
+    } else if(deltaMem < 0){
+      cellState.freeResources(scheduler, machineID, 0, -deltaMem, locked)
     }
-    currentMem += valueMem
+    currentMem += deltaMem
 
-//      logger.trace("The new cell has " + currentCpus + " CPUs and " + currentMem + " memory. Resources slack was: " + lastSlackCpus + " CPUs " + lastSlackMem + " Memory. The status is " + status)
-    scheduler.simulator.logger.info(scheduler.loggerPrefix + " The new cell has " + currentCpus + " CPUs and %.2fGiB".format(currentMem / Constant.GiB.toDouble) +
-      " memory. Resources slack was: " + valueCpu + " CPUs " + valueMem + " Memory. The status is " + status)
+    scheduler.simulator.logger.debug(scheduler.loggerPrefix + " The new claimDelta has " + currentCpus + " CPUs and %.2fGiB".format(currentMem / Constant.GiB.toDouble) +
+      " memory. Resources slack was: " + deltaCpus + " CPUs " + deltaMem + " Memory. The status is " + status)
 
-    (valueCpu, valueMem)
+    (deltaCpus, deltaMem)
   }
 
 }

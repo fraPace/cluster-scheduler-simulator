@@ -5,7 +5,7 @@ import com.typesafe.scalalogging.{LazyLogging, Logger}
 import org.slf4j.LoggerFactory
 
 import scala.collection.mutable
-import scala.collection.mutable.ListBuffer
+import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 
 
 object EventType extends Enumeration {
@@ -187,6 +187,7 @@ class ClusterSimulator(val cellState: CellState,
                        val monitoringPeriod: Double = 1.0,
                        var prefillScheduler: PrefillScheduler = null)
   extends Simulator(logging) {
+
   assert(schedulers.nonEmpty, {
     "At least one scheduler must be provided to scheduler constructor."
   })
@@ -267,19 +268,18 @@ class ClusterSimulator(val cellState: CellState,
     pendingQueueStatus.put(scheduler.name, ListBuffer[Long]())
     runningQueueStatus.put(scheduler.name, ListBuffer[Long]())
   })
-  val cpuAllocation: ListBuffer[Double] = ListBuffer()
-  val memAllocation: ListBuffer[Double] = ListBuffer()
-  val cpuUtilization: ListBuffer[Double] = ListBuffer()
-  val memUtilization: ListBuffer[Double] = ListBuffer()
+  val cpuAllocation: ListBuffer[Float] = ListBuffer()
+  val memAllocation: ListBuffer[Float] = ListBuffer()
+  val cpuAllocationWasted: ArrayBuffer[Float] = ArrayBuffer()
+  val memAllocationWasted: ArrayBuffer[Float] = ArrayBuffer()
+  val cpuUtilization: ListBuffer[Float] = ListBuffer()
+  val memUtilization: ListBuffer[Float] = ListBuffer()
+  val cpuUtilizationWasted: ArrayBuffer[Float] = ArrayBuffer()
+  val memUtilizationWasted: ArrayBuffer[Float] = ArrayBuffer()
   var roundRobinCounter = 0
-  var sumCpuAllocation: Double = 0.0
-  var sumMemAllocation: Double = 0.0
   var sumCpuLocked: Double = 0.0
   var sumMemLocked: Double = 0.0
   var numAllocationMonitoringMeasurements: Long = 0
-  var sumCpuUtilization: Double = 0.0
-  var sumMemUtilization: Double = 0.0
-  var numUtilizationMonitoringMeasurements: Long = 0
 
   def measureQueues(): Unit = {
     schedulers.values.foreach(scheduler => {
@@ -305,9 +305,9 @@ class ClusterSimulator(val cellState: CellState,
   // tied up while they are pessimistically locked (e.g. while they are
   // offered as part of a Mesos resource-offer). That type of Allocation
   // is tracked separately below.
-  def avgCpuAllocation: Double = sumCpuAllocation / numAllocationMonitoringMeasurements.toDouble
+  def avgCpuAllocation: Double = cpuAllocation.sum / cpuAllocation.size.toDouble
 
-  def avgMemAllocation: Double = sumMemAllocation / numAllocationMonitoringMeasurements.toDouble
+  def avgMemAllocation: Double = memAllocation.sum / memAllocation.size.toDouble
 
   // Track "Allocation" of resources due to their being pessimistically locked
   // (i.e. while they are offered as part of a Mesos resource-offer).
@@ -316,37 +316,27 @@ class ClusterSimulator(val cellState: CellState,
   def avgMemLocked: Double = sumMemLocked / numAllocationMonitoringMeasurements.toDouble
 
   def measureAllocation(): Unit = {
+    cpuAllocation += cellState.totalOccupiedCpus / cellState.totalCpus.toFloat
+    memAllocation += cellState.totalOccupiedMem / cellState.totalMem.toFloat
+
+    cpuAllocationWasted += 0
+    memAllocationWasted += 0
+
     numAllocationMonitoringMeasurements += 1
-
-    val _cpuAllocation: Double = cellState.totalOccupiedCpus / cellState.totalCpus.toDouble
-    cpuAllocation += _cpuAllocation
-    sumCpuAllocation += _cpuAllocation
-    val _memoryAllocation: Double = cellState.totalOccupiedMem / cellState.totalMem.toDouble
-    memAllocation += _memoryAllocation
-    sumMemAllocation += _memoryAllocation
-
-    sumCpuLocked += cellState.totalLockedCpus.toDouble
-    sumMemLocked += cellState.totalLockedMem.toDouble
-
-    logger.debug("Adding Allocation measurement " + numAllocationMonitoringMeasurements + ". Avg cpu: " + avgCpuAllocation + ". Avg mem: " + avgMemAllocation)
+    sumCpuLocked += cellState.totalLockedCpus.toFloat
+    sumMemLocked += cellState.totalLockedMem.toFloat
   }
 
-  def avgCpuUtilization: Double = sumCpuUtilization / numUtilizationMonitoringMeasurements.toDouble
 
-  def avgMemUtilization: Double = sumMemUtilization / numUtilizationMonitoringMeasurements.toDouble
+  def avgCpuUtilization: Double = cpuUtilization.sum / cpuUtilization.size.toDouble
+
+  def avgMemUtilization: Double = memUtilization.sum / memUtilization.size.toDouble
 
   def measureUtilization(): Unit = {
-    numUtilizationMonitoringMeasurements += 1
-
-    val _cpuUtilization: Double = cellState.totalCpuUtilization() / cellState.totalCpus.toDouble
-    cpuUtilization += _cpuUtilization
-    sumCpuUtilization += _cpuUtilization
-
-    val _memUtilization: Double = cellState.totalMemoryUtilization() / cellState.totalMem.toDouble
-    memUtilization += _memUtilization
-    sumMemUtilization += _memUtilization
-
-    logger.debug("Adding Utilization measurement " + numUtilizationMonitoringMeasurements + ". Avg cpu: " + avgCpuUtilization + ". Avg mem: " + avgMemUtilization)
+    cpuUtilization += cellState.cpuAvgUtilization()
+    memUtilization += cellState.memoryAvgUtilization()
+    cpuUtilizationWasted += 0
+    memUtilizationWasted += 0
   }
 
   def monitoring(): Unit = {
@@ -383,6 +373,49 @@ class ClusterSimulator(val cellState: CellState,
     afterDelay(0) {
       monitoring()
     }
-    super.run(runTime, wallClockTimeout)
+    val (timedOut, totalTime, totalEventsProcessed) = super.run(runTime, wallClockTimeout)
+
+    if(cellState.availableCpus != cellState.totalCpus || cellState.availableMem != cellState.totalMem)
+      logger.warn("There are still some resources allocated allocated! CPU: " +  cellState.totalOccupiedCpus + " Mem: " + cellState.totalOccupiedMem)
+
+    (timedOut, totalTime, totalEventsProcessed)
+  }
+
+  def avgCpuUtilizationWasted: Double = cpuUtilizationWasted.sum / cpuUtilizationWasted.size.toDouble
+
+  def avgMemUtilizationWasted: Double = memUtilizationWasted.sum / memUtilizationWasted.size.toDouble
+
+  def avgCpuAllocationWasted: Double = cpuAllocationWasted.sum / cpuAllocationWasted.size.toDouble
+
+  def avgMemAllocationWasted: Double = memAllocationWasted.sum / memAllocationWasted.size.toDouble
+
+  def recordWastedResources(cl: ClaimDelta): Unit = {
+    cl.job match {
+      case Some(job) =>
+        var i: Double = cl.creationTime
+        var index: Int = (i / monitoringPeriod).toInt
+        while(i <= currentTime){
+//          cpuAllocationWasted(index) += job.cpusPerTask /  cellState.totalCpus.toFloat
+//          assert(cpuAllocationWasted(index) <= 100, {
+//            "Cpu Allocation Wasted cannot be higher than 100% (" + cpuAllocationWasted(index) + "%)"
+//          })
+//          memAllocationWasted(index) += job.memPerTask /  cellState.totalMem.toFloat
+//          assert(memAllocationWasted(index) <= 100, {
+//            "Memory Allocation Wasted cannot be higher than 100% (" + memAllocationWasted(index) + "%)"
+//          })
+
+          cpuUtilizationWasted(index) += job.cpuUtilization(i) /  cellState.totalCpus.toFloat
+          assert(cpuUtilizationWasted(index) <= 100, {
+            "Cpu Utilization Wasted cannot be higher than 100% (" + cpuUtilizationWasted(index) + "%)"
+          })
+          memUtilizationWasted(index) += job.memoryUtilization(i) /  cellState.totalMem.toFloat
+          assert(memUtilizationWasted(index) <= 100, {
+            "Memory Utilization Wasted cannot be higher than 100% (" + memUtilizationWasted(index) + "%)"
+          })
+          index += 1
+          i += monitoringPeriod
+        }
+      case None => None
+    }
   }
 }

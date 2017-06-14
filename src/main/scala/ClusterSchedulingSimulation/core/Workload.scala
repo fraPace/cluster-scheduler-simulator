@@ -126,7 +126,7 @@ case class Job(id: Long,
   // This variable is used to calculate the relative (non absolute) progression
   private[this] var _lastProgressTimeCalculation: Double = 0
 
-  private[this] var _cpuUtilization: Array[Long] = Array[Long]()
+  private[this] var _cpuUtilization: Array[Int] = Array[Int]()
   private[this] var _memoryUtilization: Array[Long] = Array[Long]()
 
   private[this] var _numJobCrashes: Long = 0
@@ -147,35 +147,50 @@ case class Job(id: Long,
     newJob
   }
 
-  def cpuUtilization: Array[Long] = _cpuUtilization
-  def cpuUtilization_=(value: Array[Long]): Unit = {
-    value.foreach(v => assert(v <= cpusPerTask, {
-      "CPU Utilization (" + v + ") is higher than allocated (" + cpusPerTask + ")."
-    }))
-    _cpuUtilization = value
-  }
-
-  def memoryUtilization: Array[Long] = _memoryUtilization
-  def memoryUtilization_=(value: Array[Long]): Unit = {
-    value.foreach(v => assert(v <= memPerTask, {
-      "Memory Utilization (" + v + ") is higher than allocated (" + memPerTask + ")."
-    }))
-    _memoryUtilization = value
-  }
-
   override def equals(that: Any): Boolean =
     that match {
       case that: Job => that.id == this.id && that.workloadName.equals(this.workloadName)
       case _ => false
     }
 
+  override def hashCode(): Int = this.id.hashCode()
+
+  var cpuUtilizationBuckets: Float = 0
+  def cpuUtilization: Array[Int] = _cpuUtilization
+  def cpuUtilization_=(value: Array[Int]): Unit = {
+    if(value.nonEmpty){
+      value.foreach(v => assert(v <= cpusPerTask, {
+        "CPU Utilization (" + v + ") is higher than allocated (" + cpusPerTask + ")."
+      }))
+      _cpuUtilization = value
+      // We use this formula to divide the utilization in buckets and to prevent errors when accessing the last element of the array
+      cpuUtilizationBuckets = Math.ceil(jobDurationCoreOnly / (_cpuUtilization.length - 1).toDouble).toFloat
+    }
+  }
+
+  var memoryUtilizationBuckets: Float = 0
+  def memoryUtilization: Array[Long] = _memoryUtilization
+  def memoryUtilization_=(value: Array[Long]): Unit = {
+    if(value.nonEmpty){
+      value.foreach(v => assert(v <= memPerTask, {
+        "Memory Utilization (" + v + ") is higher than allocated (" + memPerTask + ")."
+      }))
+      _memoryUtilization = value
+      // We use this formula to divide the utilization in buckets and to prevent errors when accessing the last element of the array
+      memoryUtilizationBuckets = Math.ceil(jobDurationCoreOnly / (_memoryUtilization.length - 1).toDouble).toFloat
+    }
+  }
 
   def cpuUtilization(currtime: Double): Long = {
-    _cpuUtilization((currtime - _jobStartedWorking).toInt % _cpuUtilization.length)
+    if(currtime < _jobStartedWorking)
+      return 0
+    _cpuUtilization(((currtime - _jobStartedWorking) / cpuUtilizationBuckets).toInt)
   }
 
   def memoryUtilization(currtime: Double): Long = {
-    _memoryUtilization((currtime - _jobStartedWorking).toInt % _memoryUtilization.length)
+    if(currtime < _jobStartedWorking)
+      return 0
+    _memoryUtilization(((currtime - _jobStartedWorking) / memoryUtilizationBuckets).toInt)
   }
 
   def coreClaimDeltas: mutable.HashSet[ClaimDelta] = _coreClaimDeltas
@@ -193,19 +208,54 @@ case class Job(id: Long,
 
   def elasticClaimDeltas: mutable.HashSet[ClaimDelta] = _elasticClaimDeltas
   def elasticClaimDeltas_=(value:mutable.HashSet[ClaimDelta]): Unit = {_elasticClaimDeltas = value}
-  def addElasticClaimDeltas(value:Seq[ClaimDelta]): Unit = {
+  def addElasticClaimDeltas(value:Seq[ClaimDelta]): Int = {
+    if(_elasticClaimDeltas.size + coreTasks != _claimDeltas.size){
+      logger.warn("Something is wrong! The size of elasticClaimDelta (" + _elasticClaimDeltas.size +
+        ") should be the same as claimDelta(" + _claimDeltas.size + ") minus the number of coreTasks(" + coreTasks +
+        "), but it is not.")
+    }
+    assert(_elasticClaimDeltas.size + coreTasks == _claimDeltas.size, {
+      "Something is wrong! The size of elasticClaimDelta (" + _elasticClaimDeltas.size +
+        ") should be the same as claimDelta(" + _claimDeltas.size + ") minus the number of coreTasks(" + coreTasks +
+        "), but it is not."
+    })
+    val originalSize: Int = _elasticClaimDeltas.size
+
     _elasticClaimDeltas ++= value
-    assert(_elasticClaimDeltas.size <= elasticTasks, {"The number of deployed ClaimDelta (" + _elasticClaimDeltas.size +
-      ") cannot be higher than requested elastic tasks (" + elasticTasks + ")."})
+    assert(_elasticClaimDeltas.size <= elasticTasks, {
+      "The number of deployed ClaimDelta (" + _elasticClaimDeltas.size +
+      ") cannot be higher than requested elastic tasks (" + elasticTasks + ")."
+    })
     _claimDeltas ++= value
+
+    _elasticClaimDeltas.size - originalSize
   }
-  def removeElasticClaimDeltas(value:Seq[ClaimDelta]): Unit = {
+  def removeElasticClaimDeltas(value:Seq[ClaimDelta]): Int = {
+    assert(_elasticClaimDeltas.size + coreTasks == _claimDeltas.size, {
+      "Something is wrong! The size of elasticClaimDelta (" + _elasticClaimDeltas.size +
+        ") should be the same as claimDelta(" + _claimDeltas.size + ") minus the number of coreTasks(" + coreTasks +
+        "), but it is not."
+    })
+    val originalSize: Int = _elasticClaimDeltas.size
+
     _elasticClaimDeltas --= value
     _claimDeltas --= value
+
+    originalSize - _elasticClaimDeltas.size
   }
+
   def removeElasticClaimDelta(value:ClaimDelta): Unit = {
+    assert(_elasticClaimDeltas.size + coreTasks == _claimDeltas.size, {
+      "Something is wrong! The size of elasticClaimDelta (" + _elasticClaimDeltas.size +
+        ") should be the same as claimDelta(" + _claimDeltas.size + ") minus the number of coreTasks(" + coreTasks +
+        "), but it is not."
+    })
+    val originalSize: Int = _elasticClaimDeltas.size
+
     _elasticClaimDeltas -= value
     _claimDeltas -= value
+
+    originalSize - _elasticClaimDeltas.size
   }
 
   def claimDeltas: mutable.HashSet[ClaimDelta] = _claimDeltas
@@ -280,10 +330,11 @@ case class Job(id: Long,
   def tasksUnscheduled: Int = numTasks - tasksScheduled
 
   def jobDuration: Double = _jobDuration
+  def jobDurationCoreOnly: Double = _jobDuration * (numTasks / coreTasks.toFloat)
   def remainingTime: Double = (1 - _progress) * jobDuration
 
   def estimateJobDuration(currTime: Double = 0.0, newTasksAllocated: Int = 0, tasksRemoved: Int = 0, mock: Boolean = false): Double = {
-    if (_lastProgressTimeCalculation == 0)
+    if (_lastProgressTimeCalculation < _jobStartedWorking)
       _lastProgressTimeCalculation = _jobStartedWorking
 
     val relativeProgress: Double = (currTime - _lastProgressTimeCalculation) /
@@ -318,16 +369,20 @@ case class Job(id: Long,
 //    if (_isZoeApp) _moldableTasksUnscheduled = value else _unscheduledTasks = value
 //  }
 
+  var numResets: Int = 0
   def reset(): Unit = {
+    numResets += 1
+
+    finalStatus = JobStatus.Not_Scheduled
+
+    _claimDeltas = mutable.HashSet[ClaimDelta]()
+    _coreClaimDeltas = mutable.HashSet[ClaimDelta]()
+    _elasticClaimDeltas = mutable.HashSet[ClaimDelta]()
+
     _progress = 0
     _lastProgressTimeCalculation = 0.0
-//    tasksUnscheduled = coreTasks
-//    elasticTasksUnscheduled = elasticTasks
-    claimDeltas = mutable.HashSet[ClaimDelta]()
-    coreClaimDeltas = mutable.HashSet[ClaimDelta]()
-    elasticClaimDeltas = mutable.HashSet[ClaimDelta]()
-    finalStatus = JobStatus.Not_Scheduled
-//    _firstScheduled = true
+
+    _firstScheduled = true
     _timeInQueueTillFirstScheduled = 0.0
     _timeInQueueTillFullyScheduled = 0.0
     _jobStartedWorking = 0.0

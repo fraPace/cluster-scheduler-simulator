@@ -283,7 +283,7 @@ class NewSparkScheduler(name: String,
         cellState.availableMemPerMachine(currMachID) >= job.memPerTask) {
         assert(currMachID >= 0 && currMachID < cellState.machineSeqNums.length)
 
-        val claimDelta = new ClaimDelta(this,
+        val claimDelta = ClaimDelta(this,
           currMachID,
           cellState.machineSeqNums(currMachID),
           job.taskDuration,

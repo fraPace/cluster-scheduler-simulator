@@ -394,10 +394,14 @@ workload_job_unscheduled_tasks_ratio = {}
 workload_job_scheduled_execution_time_per_job_id = {}
 
 resource_allocation_cpu = {}
+resource_allocation_cpu_wasted = {}
 resource_allocation_mem = {}
+resource_allocation_mem_wasted = {}
 
 resource_utilization_cpu = {}
+resource_utilization_cpu_wasted = {}
 resource_utilization_mem = {}
+resource_utilization_mem_wasted = {}
 
 pending_queue_status = {}
 running_queue_status = {}
@@ -585,9 +589,9 @@ for filename in input_list:
         workload_job_runtime_tasks = {}
         workload_job_arrival_time = {}
         workload_job_inter_arrival_time = {}
-        for common_workload_stats in env.common_workload_stats:
-            workload_name = common_workload_stats.workload_name
-            for job_stats in common_workload_stats.job_stats:
+        for base_workload_stats in env.base_workload_stats:
+            workload_name = base_workload_stats.workload_name
+            for job_stats in base_workload_stats.job_stats:
                 # Number of Tasks
                 append_or_create(workload_job_num_tasks,
                                  workload_name,
@@ -671,6 +675,18 @@ for filename in input_list:
             if policy not in resource_utilization_mem:
                 resource_utilization_mem[policy] = exp_result.resource_utilization.memory
 
+            logging.info("Building results [resources allocation wasted]")
+            if policy not in resource_allocation_cpu_wasted:
+                resource_allocation_cpu_wasted[policy] = exp_result.resource_allocation_wasted.cpu
+            if policy not in resource_allocation_mem_wasted:
+                resource_allocation_mem_wasted[policy] = exp_result.resource_allocation_wasted.memory
+
+            logging.info("Building results [resources utilization wasted]")
+            if policy not in resource_utilization_cpu_wasted:
+                resource_utilization_cpu_wasted[policy] = exp_result.resource_utilization_wasted.cpu
+            if policy not in resource_utilization_mem_wasted:
+                resource_utilization_mem_wasted[policy] = exp_result.resource_utilization_wasted.memory
+
             # i = 0
             # for cpu in exp_result.resource_allocation.cpu:
             #     resource_allocation_cpu[policy].append((i, cpu))
@@ -683,8 +699,8 @@ for filename in input_list:
             logging.info("Building results [workload]")
             # Build results dictionaries of per-workload stats.
             for wl_stat in exp_result.workload_stats:
-                workload_name = wl_stat.workload_name
-                for job_stats in wl_stat.job_stats:
+                workload_name = wl_stat.base_workload_stats.workload_name
+                for job_stats in wl_stat.base_workload_stats.job_stats:
                     # if workload_name not in workload_job_scheduled_turnaround:
                     #     workload_job_scheduled_turnaround[workload_name] = {}
                     #
@@ -1130,9 +1146,13 @@ def plot_1d_data_set_dict(data_set_1d_dict,
 
             logging.debug("sorting x_vals")
             # x_vals = [value._1 for value in values]
-            y_vals = average(values, average_interval)
+            if len(values) >= average_threshold:
+                y_vals = average(values, average_interval)
+                x_vals = np.arange(0, len(y_vals) * average_interval, average_interval)
+            else:
+                y_vals = values
+                x_vals = np.arange(0, len(y_vals))
 
-            x_vals = np.arange(0, len(y_vals) * average_interval, average_interval)
             all_x_vals_set = all_x_vals_set.union(x_vals)
             logging.debug("all_x_vals_set updated, now = %s" % all_x_vals_set)
             # Rewrite zero's for the y_axis_types that will be log.
@@ -1520,33 +1540,38 @@ def plot_distribution(data_set_1d_dict,
 
 
 def sort_keys(dictionary):
-    # sorted_keys = []
+    def strip_first_letter(label):
+        label = label.encode('ascii', 'ignore')
+        if label.startswith('h') or label.startswith('e'):
+            label = label[1:]
+        return label
+
+    def parse_key(label):
+        label = strip_first_letter(label)
+        index = label.find('-')
+        label = label[index + 1:] + '-' + label[:index]
+        return label
+
+    sorted_keys = []
     keys = dictionary.keys()
     if len(keys) > 0:
-        keys = sorted(keys)
-    # for exp_env in keys:
-    #     if exp_env not in sorted_keys:
-    #         lb = exp_env.encode('ascii', 'ignore')
-    #         if lb.startswith('h'):
-    #             lb = lb[1:]
-    #         inserted = False
-    #         for idx in range(len(sorted_keys)):
-    #             lb1 = sorted_keys[idx].encode('ascii', 'ignore')
-    #             if lb1.startswith('h'):
-    #                 lb1 = lb1[1:]
-    #
-    #             if lb == lb1:
-    #                 if lb == exp_env:
-    #                     sorted_keys.insert(idx, exp_env)
-    #                 else:
-    #                     sorted_keys.insert(idx + 1, exp_env)
-    #                 inserted = True
-    #                 break
-    #         if not inserted:
-    #             sorted_keys.append(exp_env)
-    # logging.info("{}".format(sorted_keys))
-    # return sorted_keys
-    return keys
+        keys = sorted(keys, key=parse_key)
+
+        # sorted_keys = keys
+        tmp_keys = [keys[0]]
+        for exp_env in keys[1:]:
+            label = strip_first_letter(exp_env)
+            if label == strip_first_letter(tmp_keys[0]):
+                if label != exp_env:
+                    tmp_keys.append(exp_env)
+                else:
+                    tmp_keys.insert(0, exp_env)
+            else:
+                [sorted_keys.append(l) for l in tmp_keys]
+                tmp_keys = [exp_env]
+        [sorted_keys.append(l) for l in tmp_keys]
+        # sorted_keys = keys
+    return sorted_keys
 
 
 def plot_boxplot(data_set_1d_dict,
@@ -2215,14 +2240,30 @@ plot_boxplot(resource_allocation_cpu,
              u'% CPU',
              "0-to-1",
              "boxplot")
-#
-# Cell MEM allocation Time Series
-# plot_1d_data_set_dict(resource_allocation_mem,
-#                       "Cluster memory allocation",
-#                       "percent-cell-mem-allocation",
-#                       u'% memory allocation in cell',
+
+# CELL CPU allocation wasted Time Series
+# plot_1d_data_set_dict(resource_allocation_cpu_wasted,
+#                       "Cluster CPU allocation wasted",
+#                       "percent-cell-cpu-allocation-wasted",
+#                       u'% CPU allocation in cell',
 #                       "0-to-1",
 #                       "timeseries")
+
+plot_boxplot(resource_allocation_cpu_wasted,
+             "Cluster CPU allocation wasted",
+             "percent-cell-cpu-allocation-wasted",
+             u'% CPU',
+             "0-to-1",
+             "boxplot")
+
+#
+# Cell MEM allocation Time Series
+plot_1d_data_set_dict(resource_allocation_mem,
+                      "Cluster memory allocation",
+                      "percent-cell-mem-allocation",
+                      u'% memory allocation in cell',
+                      "0-to-1",
+                      "timeseries")
 #
 plot_boxplot(resource_allocation_mem,
              "Cluster Memory allocation",
@@ -2230,6 +2271,21 @@ plot_boxplot(resource_allocation_mem,
              u'% memory',
              "0-to-1",
              "boxplot")
+
+# Cell MEM allocation wasted Time Series
+# plot_1d_data_set_dict(resource_allocation_mem_wasted,
+#                       "Cluster memory allocation wasted",
+#                       "percent-cell-mem-allocation-wasted",
+#                       u'% memory allocation in cell',
+#                       "0-to-1",
+#                       "timeseries")
+#
+# plot_boxplot(resource_allocation_mem_wasted,
+#              "Cluster Memory allocation wasted",
+#              "percent-cell-mem-allocation-wasted",
+#              u'% memory',
+#              "0-to-1",
+#              "boxplot")
 
 
 # CELL CPU allocation Time Series
@@ -2247,14 +2303,29 @@ plot_boxplot(resource_utilization_cpu,
              "0-to-1",
              "boxplot")
 
-
-# Cell MEM Utilization Time Series
-# plot_1d_data_set_dict(resource_utilization_mem,
-#                       "Cluster memory allocation",
-#                       "percent-cell-mem-allocation",
-#                       u'% memory allocation in cell',
+# CELL CPU allocation wasted Time Series
+# plot_1d_data_set_dict(resource_utilization_cpu_wasted,
+#                       "Cluster CPU allocation wasted",
+#                       "percent-cell-cpu-allocation-wasted",
+#                       u'% CPU allocation in cell',
 #                       "0-to-1",
 #                       "timeseries")
+
+plot_boxplot(resource_utilization_cpu_wasted,
+             "Cluster CPU utilization wasted",
+             "percent-cell-cpu-utilization-wasted",
+             u'% CPU',
+             "0-to-1",
+             "boxplot")
+
+
+# Cell MEM Utilization Time Series
+plot_1d_data_set_dict(resource_utilization_mem,
+                      "Cluster Memory utilization",
+                      "percent-cell-mem-utilization",
+                      u'% memory',
+                      "0-to-1",
+                      "timeseries")
 #
 plot_boxplot(resource_utilization_mem,
              "Cluster Memory utilization",
@@ -2263,14 +2334,29 @@ plot_boxplot(resource_utilization_mem,
              "0-to-1",
              "boxplot")
 
+# Cell MEM Utilization wasted Time Series
+plot_1d_data_set_dict(resource_utilization_mem_wasted,
+                      "Cluster Memory utilization wasted",
+                      "percent-cell-mem-utilization-wasted",
+                      u'% memory',
+                      "0-to-1",
+                      "timeseries")
+#
+plot_boxplot(resource_utilization_mem_wasted,
+             "Cluster Memory utilization wasted",
+             "percent-cell-mem-utilization-wasted",
+             u'% memory',
+             "0-to-1",
+             "boxplot")
+
 #
 # Pending Queue Status
-# plot_1d_data_set_dict(pending_queue_status,
-#                       "Pending Queue Status",
-#                       "pending-queue-status",
-#                       u'Number Application in queue',
-#                       "abs",
-#                       "timeseries")
+plot_1d_data_set_dict(pending_queue_status,
+                      "Pending Queue Status",
+                      "pending-queue-status",
+                      u'Applications in queue',
+                      "abs",
+                      "timeseries")
 
 plot_boxplot(pending_queue_status,
              "Pending Queue",
@@ -2280,12 +2366,12 @@ plot_boxplot(pending_queue_status,
              "boxplot")
 
 # # Running Queue Status
-# plot_1d_data_set_dict(running_queue_status,
-#                       "Running Queue Status",
-#                       "running-queue-status",
-#                       u'Number Application in queue',
-#                       "abs",
-#                       "timeseries")
+plot_1d_data_set_dict(running_queue_status,
+                      "Running Queue Status",
+                      "running-queue-status",
+                      u'Applications running',
+                      "abs",
+                      "timeseries")
 
 plot_boxplot(running_queue_status,
              "Running Applications",

@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --force-yes \
 						zip
 
 # Install SCALA
-ENV SCALA_VERSION="2.10.4"
+ENV SCALA_VERSION="2.12.1"
 RUN apt-get update && apt-get install -y --force-yes libjansi-java
 RUN curl -sSO http://downloads.typesafe.com/scala/${SCALA_VERSION}/scala-${SCALA_VERSION}.deb && \
                        dpkg -i scala-${SCALA_VERSION}.deb && \
