@@ -409,6 +409,9 @@ running_queue_status = {}
 workload_job_scheduled_slowdown = {}
 
 
+moving_average_exp_weight = 5
+
+
 def moving_average_exp(interval, weight):
     N = int(weight)
     weights = np.exp(np.linspace(-1., 0., N))
@@ -416,7 +419,7 @@ def moving_average_exp(interval, weight):
     return np.convolve(weights, interval)[N-1:-N+1]
 
 average_interval = 3600
-average_threshold = average_interval * 24 * 20
+average_threshold = average_interval * 24 * 10
 
 
 def average(arr, n):
@@ -1627,7 +1630,7 @@ def plot_boxplot(data_set_1d_dict,
         if preemptive:
             color = 'gray'
 
-        x_mav = moving_average_exp(x_vals, 500)
+        x_mav = moving_average_exp(x_vals, moving_average_exp_weight)
         y_vals_set = y_vals_set.union(x_mav)
         # x_mav = x_vals
         if len(x_mav) > 0:
@@ -1707,7 +1710,7 @@ def plot_boxplot_2d(data_set_2d_dict,
             if preemptive:
                 color = 'gray'
 
-            x_mav = moving_average_exp(x_vals, 500)
+            x_mav = moving_average_exp(x_vals, moving_average_exp_weight)
             # x_mav = x_vals
             y_vals_set = y_vals_set.union(x_mav)
             if len(x_mav) > 0:
@@ -1812,6 +1815,7 @@ def setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, x
     elif v_dim == "timeseries":
         ax.set_xscale('linear')
         plt.xlim(xmin=0, xmax=max(x_vals_set))
+        plt.xticks(rotation=70)
         # ax.set_autoscalex_on(True)
     elif v_dim == "boxplot":
         ax.set_xscale('linear')
@@ -2121,11 +2125,11 @@ for workload_name, workload_to_policy_map in workload_job_scheduled_turnaround.i
 #                   u'Runtime (s)',
 #                   "0-to-1")
 # #
-# # plot_distribution(workload_job_arrival_time,
-# #                   "Application Arrival Time distribution",
-# #                   "job-arrival-distribution",
-# #                   u'Time (s)',
-# #                   "0-to-1")
+plot_distribution(workload_job_arrival_time,
+                  "Application Arrival Time distribution",
+                  "job-arrival-distribution",
+                  u'Time (s)',
+                  "0-to-1")
 # #
 # plot_distribution(workload_job_inter_arrival_time,
 #                   "Inter-Arrival Time",
