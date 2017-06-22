@@ -113,6 +113,7 @@ function graph_experiment() {
       *spark*)                                  sim=spark;;
       *zoe-*)                                   sim=zoe;;
       *zoe_preemptive*)                         sim=zoe-preemptive;;
+      *zoe_dynamic*)                            sim=zoe-dynamic;;
       *)                                        echo "Unknown simulator type, in ${filename} exiting."
                                                 exit 1
     esac
@@ -164,19 +165,28 @@ function graph_experiment() {
 }
 
 cd ${CLUSTER_SIM_HOME}/src/main/python/graphing-scripts
-PROTO_LIST=''
 
-#echo "capturing: ls ${input_dir}| grep protobuf | grep zoe-"
-#ls ${input_dir} | grep protobuf | grep zoe-
-#for curr_filename in `ls ${input_dir}|grep protobuf|grep zoe-`; do
-echo "capturing: ls ${input_dir}| grep protobuf | grep zoe"
-ls ${input_dir} | grep protobuf | grep zoe
-for curr_filename in `ls ${input_dir}|grep protobuf|grep zoe`; do
+# Parse ZOE
+PROTO_LIST=''
+echo "capturing: ls ${input_dir}| grep protobuf | grep zoe-"
+ls ${input_dir} | grep protobuf | grep zoe-
+for curr_filename in `ls ${input_dir}|grep protobuf|grep zoe-`; do
     PROTO_LIST+="${input_dir}/${curr_filename},"
 done
 echo Calling graph_experiment with ${PROTO_LIST}
 graph_experiment ${PROTO_LIST::-1}
 
+# Parse ZOE_DYNAMIC
+PROTO_LIST=''
+echo "capturing: ls ${input_dir}| grep protobuf | grep zoe_dynamic-"
+ls ${input_dir} | grep protobuf | grep zoe_dynamic-
+for curr_filename in `ls ${input_dir}|grep protobuf|grep zoe_dynamic-`; do
+    PROTO_LIST+="${input_dir}/${curr_filename},"
+done
+echo Calling graph_experiment with ${PROTO_LIST}
+graph_experiment ${PROTO_LIST::-1}
+
+# Parse ZOE_PREEMPTIVE
 #PROTO_LIST=''
 #echo "capturing: ls ${input_dir}| grep protobuf | grep zoe_preemptive-"
 #ls ${input_dir} | grep protobuf | grep zoe_preemptive-
@@ -186,11 +196,12 @@ graph_experiment ${PROTO_LIST::-1}
 #echo Calling graph_experiment with ${PROTO_LIST}
 #graph_experiment ${PROTO_LIST::-1}
 
-echo "capturing: ls ${input_dir}| grep protobuf | grep -v zoe"
-ls ${input_dir} | grep protobuf | grep -v zoe
-for curr_filename in `ls ${input_dir}|grep protobuf|grep -v zoe`; do
-    echo Calling graph_experiment with ${curr_filename}
-    graph_experiment ${curr_filename}
-done
+# Parse Others
+#echo "capturing: ls ${input_dir}| grep protobuf | grep -v zoe"
+#ls ${input_dir} | grep protobuf | grep -v zoe
+#for curr_filename in `ls ${input_dir}|grep protobuf|grep -v zoe`; do
+#    echo Calling graph_experiment with ${curr_filename}
+#    graph_experiment ${curr_filename}
+#done
 
 
