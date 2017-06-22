@@ -40,7 +40,7 @@ abstract class Simulator(logging: Boolean = false) extends LazyLogging {
   private[this] var _totalEventsProcessed: Long = 0
 
 
-  def removeIf(p: WorkItem => Boolean): Unit = {
+  def removeEventsIf(p: WorkItem => Boolean): Unit = {
     _agenda = _agenda.filterNot(p)
   }
 
@@ -261,13 +261,14 @@ class ClusterSimulator(val cellState: CellState,
 
   })
 
-  val pendingQueueStatus: scala.collection.mutable.Map[String, ListBuffer[Long]] = scala.collection.mutable.Map[String, ListBuffer[Long]]()
-  val runningQueueStatus: scala.collection.mutable.Map[String, ListBuffer[Long]] = scala.collection.mutable.Map[String, ListBuffer[Long]]()
+  val pendingQueueStatus: scala.collection.mutable.Map[String, ListBuffer[Int]] = scala.collection.mutable.Map[String, ListBuffer[Int]]()
+  val runningQueueStatus: scala.collection.mutable.Map[String, ListBuffer[Int]] = scala.collection.mutable.Map[String, ListBuffer[Int]]()
 
   schedulers.values.foreach(scheduler => {
-    pendingQueueStatus.put(scheduler.name, ListBuffer[Long]())
-    runningQueueStatus.put(scheduler.name, ListBuffer[Long]())
+    pendingQueueStatus.put(scheduler.name, ListBuffer[Int]())
+    runningQueueStatus.put(scheduler.name, ListBuffer[Int]())
   })
+
   val cpuAllocation: ListBuffer[Float] = ListBuffer()
   val memAllocation: ListBuffer[Float] = ListBuffer()
   val cpuAllocationWasted: ArrayBuffer[Float] = ArrayBuffer()
@@ -280,6 +281,9 @@ class ClusterSimulator(val cellState: CellState,
   var sumCpuLocked: Double = 0.0
   var sumMemLocked: Double = 0.0
   var numAllocationMonitoringMeasurements: Long = 0
+
+  def avgPendingQueueSize(scheduler: String): Double = pendingQueueStatus(scheduler).foldLeft(0L)((b, a) => b + a) / pendingQueueStatus(scheduler).size.toDouble
+  def avgRunningQueueSize(scheduler: String): Double = runningQueueStatus(scheduler).foldLeft(0L)((b, a) => b + a) / runningQueueStatus(scheduler).size.toDouble
 
   def measureQueues(): Unit = {
     schedulers.values.foreach(scheduler => {
@@ -329,7 +333,6 @@ class ClusterSimulator(val cellState: CellState,
 
 
   def avgCpuUtilization: Double = cpuUtilization.sum / cpuUtilization.size.toDouble
-
   def avgMemUtilization: Double = memUtilization.sum / memUtilization.size.toDouble
 
   def measureUtilization(): Unit = {
@@ -376,7 +379,8 @@ class ClusterSimulator(val cellState: CellState,
     val (timedOut, totalTime, totalEventsProcessed) = super.run(runTime, wallClockTimeout)
 
     if(cellState.availableCpus != cellState.totalCpus || cellState.availableMem != cellState.totalMem)
-      logger.warn("There are still some resources allocated allocated! CPU: " +  cellState.totalOccupiedCpus + " Mem: " + cellState.totalOccupiedMem)
+      logger.warn("There are still some resources allocated allocated! CPU: " +  cellState.totalOccupiedCpus + " Mem: "
+        + cellState.totalOccupiedMem + " ClaimDeltas: " + cellState.claimDeltas.size)
 
     (timedOut, totalTime, totalEventsProcessed)
   }
@@ -395,20 +399,20 @@ class ClusterSimulator(val cellState: CellState,
         var i: Double = cl.creationTime
         var index: Int = (i / monitoringPeriod).toInt
         while(i <= currentTime){
-//          cpuAllocationWasted(index) += job.cpusPerTask /  cellState.totalCpus.toFloat
+//          cpuAllocationWasted(index) += ((job.cpusPerTask /  cellState.totalCpus.toDouble) * percentageConversion).toShort
 //          assert(cpuAllocationWasted(index) <= 100, {
 //            "Cpu Allocation Wasted cannot be higher than 100% (" + cpuAllocationWasted(index) + "%)"
 //          })
-//          memAllocationWasted(index) += job.memPerTask /  cellState.totalMem.toFloat
+//          memAllocationWasted(index) += ((job.memPerTask /  cellState.totalMem.toDouble) * percentageConversion).toShort
 //          assert(memAllocationWasted(index) <= 100, {
 //            "Memory Allocation Wasted cannot be higher than 100% (" + memAllocationWasted(index) + "%)"
 //          })
 
-          cpuUtilizationWasted(index) += job.cpuUtilization(i) /  cellState.totalCpus.toFloat
+          cpuUtilizationWasted(index) += (job.cpuUtilization(i) /  cellState.totalCpus.toDouble).toFloat
           assert(cpuUtilizationWasted(index) <= 100, {
             "Cpu Utilization Wasted cannot be higher than 100% (" + cpuUtilizationWasted(index) + "%)"
           })
-          memUtilizationWasted(index) += job.memoryUtilization(i) /  cellState.totalMem.toFloat
+          memUtilizationWasted(index) += (job.memoryUtilization(i) /  cellState.totalMem.toDouble).toFloat
           assert(memUtilizationWasted(index) <= 100, {
             "Memory Utilization Wasted cannot be higher than 100% (" + memUtilizationWasted(index) + "%)"
           })

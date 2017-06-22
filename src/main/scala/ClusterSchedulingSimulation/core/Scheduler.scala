@@ -83,6 +83,9 @@ class ClaimDelta(val id: Long,
   assert(creationTime >= 0, {
     "The creation time for the claimDelta cannot be negative. " + creationTime + "s."
   })
+
+  lazy val loggerPrefix: String = "[" + id + "]"
+
   var currentCpus: Long = requestedCpus
   var currentMem: Long = requestedMem
   var status: ClaimDeltaStatus.Value = ClaimDeltaStatus.Starting
@@ -313,13 +316,9 @@ abstract class Scheduler(val name: String,
   // schedulers) can handle jobs from multiple workload generators.
   var perWorkloadUsefulTimeScheduling: mutable.HashMap[String, Double] = mutable.HashMap[String, Double]()
   var perWorkloadWastedTimeScheduling: mutable.HashMap[String, Double] = mutable.HashMap[String, Double]()
-  // The following variables are used to understand the average queue size during the simulation
-  var totalQueueSize: Long = 0
-  var numSchedulingCalls: Long = 0
+
   var cpuUtilizationConflicts: Long = 0
   var memUtilizationConflicts: Long = 0
-
-  def avgQueueSize: Double = totalQueueSize / numSchedulingCalls.toDouble
 
   override def toString: String = name
 
@@ -475,9 +474,9 @@ abstract class Scheduler(val name: String,
     }
   }
 
-  def jobQueueSize: Long = pendingQueue.size
+  def jobQueueSize: Int = pendingQueue.size
 
-  def runningJobQueueSize: Long = runningQueue.size
+  def runningJobQueueSize: Int = runningQueue.size
 
   def isMultiPath: Boolean =
     constantThinkTimes.values.toSet.size > 1 ||

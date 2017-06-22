@@ -131,6 +131,9 @@ case class Job(id: Long,
 
   private[this] var _numJobCrashes: Long = 0
 
+  var numTasksKilled: Long = 0
+  var numTasksCrashed: Long = 0
+
   lazy val loggerPrefix: String = "[Job " + id + " (" + workloadName + ")]"
 
   var disableResize: Boolean = false
@@ -155,7 +158,7 @@ case class Job(id: Long,
 
   override def hashCode(): Int = this.id.hashCode()
 
-  var cpuUtilizationBuckets: Float = 0
+  var cpuUtilizationIndexAdjustment: Float = 0
   def cpuUtilization: Array[Int] = _cpuUtilization
   def cpuUtilization_=(value: Array[Int]): Unit = {
     if(value.nonEmpty){
@@ -163,12 +166,14 @@ case class Job(id: Long,
         "CPU Utilization (" + v + ") is higher than allocated (" + cpusPerTask + ")."
       }))
       _cpuUtilization = value
-      // We use this formula to divide the utilization in buckets and to prevent errors when accessing the last element of the array
-      cpuUtilizationBuckets = Math.ceil(jobDurationCoreOnly / (_cpuUtilization.length - 1).toDouble).toFloat
+      // We use this formula be able to divide the utilization in buckets and to prevent errors when accessing the last element of the array
+      // By also considering to have fewer points than the total size of the array
+      // Using module is not a good option because the polling times (monitoringTime and others) might be different
+      cpuUtilizationIndexAdjustment = Math.ceil(jobDurationCoreOnly / (_cpuUtilization.length - 1).toDouble).toFloat
     }
   }
 
-  var memoryUtilizationBuckets: Float = 0
+  var memoryUtilizationIndexAdjustment: Float = 0
   def memoryUtilization: Array[Long] = _memoryUtilization
   def memoryUtilization_=(value: Array[Long]): Unit = {
     if(value.nonEmpty){
@@ -176,29 +181,33 @@ case class Job(id: Long,
         "Memory Utilization (" + v + ") is higher than allocated (" + memPerTask + ")."
       }))
       _memoryUtilization = value
-      // We use this formula to divide the utilization in buckets and to prevent errors when accessing the last element of the array
-      memoryUtilizationBuckets = Math.ceil(jobDurationCoreOnly / (_memoryUtilization.length - 1).toDouble).toFloat
+      // We use this formula be able to divide the utilization in buckets and to prevent errors when accessing the last element of the array
+      // By also considering to have fewer points than the total size of the array
+      // Using module is not a good option because the polling times (monitoringTime and others) might be different
+      memoryUtilizationIndexAdjustment = Math.ceil(jobDurationCoreOnly / (_memoryUtilization.length - 1).toDouble).toFloat
     }
   }
 
   def cpuUtilization(currtime: Double): Long = {
     if(currtime < _jobStartedWorking)
       return 0
-    _cpuUtilization(((currtime - _jobStartedWorking) / cpuUtilizationBuckets).toInt)
+    _cpuUtilization(((currtime - _jobStartedWorking) / cpuUtilizationIndexAdjustment).toInt)
   }
 
   def memoryUtilization(currtime: Double): Long = {
     if(currtime < _jobStartedWorking)
       return 0
-    _memoryUtilization(((currtime - _jobStartedWorking) / memoryUtilizationBuckets).toInt)
+    _memoryUtilization(((currtime - _jobStartedWorking) / memoryUtilizationIndexAdjustment).toInt)
   }
 
   def coreClaimDeltas: mutable.HashSet[ClaimDelta] = _coreClaimDeltas
   def coreClaimDeltas_=(value:mutable.HashSet[ClaimDelta]): Unit = {_coreClaimDeltas = value}
   def addCoreClaimDeltas(value:Seq[ClaimDelta]): Unit = {
     _coreClaimDeltas ++= value
-    assert(_coreClaimDeltas.size <= coreTasks, {"The number of deployed ClaimDelta (" + _coreClaimDeltas.size +
-      ") cannot be higher than requested core tasks (" + coreTasks + ")."})
+    assert(_coreClaimDeltas.size <= coreTasks, {
+      "The number of deployed ClaimDelta (" + _coreClaimDeltas.size +
+      ") cannot be higher than requested core tasks (" + coreTasks + ")."
+    })
     _claimDeltas ++= value
   }
   def removeCoreClaimDeltas(value:Seq[ClaimDelta]): Unit = {
@@ -230,18 +239,8 @@ case class Job(id: Long,
 
     _elasticClaimDeltas.size - originalSize
   }
-  def removeElasticClaimDeltas(value:Seq[ClaimDelta]): Int = {
-    assert(_elasticClaimDeltas.size + coreTasks == _claimDeltas.size, {
-      "Something is wrong! The size of elasticClaimDelta (" + _elasticClaimDeltas.size +
-        ") should be the same as claimDelta(" + _claimDeltas.size + ") minus the number of coreTasks(" + coreTasks +
-        "), but it is not."
-    })
-    val originalSize: Int = _elasticClaimDeltas.size
-
-    _elasticClaimDeltas --= value
-    _claimDeltas --= value
-
-    originalSize - _elasticClaimDeltas.size
+  def removeElasticClaimDeltas(value:mutable.HashSet[ClaimDelta]): Unit = {
+    value.foreach(removeElasticClaimDelta)
   }
 
   def removeElasticClaimDelta(value:ClaimDelta): Unit = {
@@ -250,12 +249,8 @@ case class Job(id: Long,
         ") should be the same as claimDelta(" + _claimDeltas.size + ") minus the number of coreTasks(" + coreTasks +
         "), but it is not."
     })
-    val originalSize: Int = _elasticClaimDeltas.size
-
-    _elasticClaimDeltas -= value
     _claimDeltas -= value
-
-    originalSize - _elasticClaimDeltas.size
+    assert(_elasticClaimDeltas.remove(value))
   }
 
   def claimDeltas: mutable.HashSet[ClaimDelta] = _claimDeltas
@@ -313,7 +308,7 @@ case class Job(id: Long,
     */
   def elasticTasks: Int = _elasticTasks
   def elasticTasksScheduled: Int = elasticClaimDeltas.size
-  def elasticTasksUnscheduled: Int = elasticTasks - elasticTasksScheduled //_elasticTasksUnscheduled
+  def elasticTasksUnscheduled: Int = elasticTasks - elasticTasksScheduled
   /**
     * It will return the core component of this job.
     * The core component is the tasks set that are required to be deployed before the job can start to
@@ -331,31 +326,47 @@ case class Job(id: Long,
 
   def jobDuration: Double = _jobDuration
   def jobDurationCoreOnly: Double = _jobDuration * (numTasks / coreTasks.toFloat)
-  def remainingTime: Double = (1 - _progress) * jobDuration
-
-  def estimateJobDuration(currTime: Double = 0.0, newTasksAllocated: Int = 0, tasksRemoved: Int = 0, mock: Boolean = false): Double = {
-    if (_lastProgressTimeCalculation < _jobStartedWorking)
-      _lastProgressTimeCalculation = _jobStartedWorking
-
-    val relativeProgress: Double = (currTime - _lastProgressTimeCalculation) /
-      ((numTasks / (tasksScheduled - newTasksAllocated + tasksRemoved).toDouble) * jobDuration)
-    assert(relativeProgress >= 0 && relativeProgress <= 1, {
-      "relativeProgress (" + relativeProgress + ") cannot be lower than 0 or higher than 1. "
+  def remainingTime: Double = {
+    assert(jobFinishedWorking == 0, {
+      "Why are you calculating the progress if the job has finished already?"
     })
+    val timeLeft: Double = (1 - _progress) * ((numTasks / tasksScheduled.toDouble) * jobDuration)
+    assert(timeLeft >= 0)
+    timeLeft
+  }
 
-    val timeLeft: Double = (1 - (_progress + relativeProgress)) * ((numTasks / tasksScheduled.toDouble) * jobDuration)
+  def calculateProgress(currTime: Double = 0.0, newTasksAllocated: Int = 0,
+                        tasksRemoved: mutable.HashSet[ClaimDelta] = mutable.HashSet[ClaimDelta](), mock: Boolean = false): Unit = {
+    var relativeProgress: Double = 0.0
+    var progressLost: Double = 0.0
+    // Optimization: if the currTime is equal to _jobStartedWorking it means that the progress is 0
+    // So let's avoid extra calculations to speed up the simulation
+    if(currTime != _jobStartedWorking){
+      // In case we do not calculate the progress as soon as the job starts
+      //     so we have a _lastProgressTimeCalculation that is aligned with the starting of the job
+      if (_lastProgressTimeCalculation < _jobStartedWorking)
+        _lastProgressTimeCalculation = _jobStartedWorking
+
+      relativeProgress = (currTime - _lastProgressTimeCalculation) /
+        ((numTasks / (tasksScheduled - newTasksAllocated + tasksRemoved.size).toDouble) * jobDuration)
+      assert(relativeProgress >= 0 && relativeProgress <= 1, {
+        "relativeProgress (" + relativeProgress + ") cannot be lower than 0 or higher than 1. "
+      })
+
+      progressLost = tasksRemoved.foldLeft(0.0)((b, a) => b + (currTime - a.creationTime) / (numTasks * jobDuration))
+      assert(progressLost >= 0 && progressLost <= 1, {
+        "progressLost (" + progressLost + ") cannot be lower than 0 or higher than 1. "
+      })
+    }
 
     if (!mock) {
-      _progress += relativeProgress
+      _progress += (relativeProgress - progressLost)
       _lastProgressTimeCalculation = currTime
       assert(_progress <= 1.0, {
         "Progress cannot be higher than 1! (" + _progress + ")"
       })
     }
-
-    timeLeft
   }
-
 
 
 //  def elasticTasksUnscheduled_=(value: Int): Unit = {

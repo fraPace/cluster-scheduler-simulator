@@ -113,6 +113,8 @@ class ZoeScheduler(name: String,
     allocationMode) with LazyLogging{
   logger.debug("scheduler-id-info: " + Thread.currentThread().getId + ", " + name + ", " + hashCode() + ", " + constantThinkTimes.mkString(";")
     + ", " + perTaskThinkTimes.mkString(";"))
+
+  lazy val elasticPrefix = "[Elastic]"
   
   var pendingQueueAsList: mutable.HashSet[Job] = mutable.HashSet[Job]()
 
@@ -123,18 +125,16 @@ class ZoeScheduler(name: String,
   var firstTime = true
   val enableCellStateSnapshot: Boolean = true
 
-  override def jobQueueSize: Long = pendingQueueAsList.size
+  override def jobQueueSize: Int = pendingQueueAsList.size
 
-  override def runningJobQueueSize: Long = runningQueueAsList.size
+  override def runningJobQueueSize: Int = runningQueueAsList.size
 
   def removePendingJob(job: Job): Unit = {
     pendingQueueAsList -= job
   }
 
   def removeRunningJob(job: Job): Unit = {
-    val originalSize: Int = runningQueueAsList.size
-    runningQueueAsList -= job
-    assert(originalSize - 1 == runningQueueAsList.size)
+    assert(runningQueueAsList.remove(job))
   }
 
   def addPendingJob(job: Job): Unit = {
@@ -184,6 +184,264 @@ class ZoeScheduler(name: String,
       wakeUp()
   }
 
+  def removeAllUpcomingEventsForJob(job: Job): Unit = {
+    simulator.removeEventsIf(x => x.eventID == job.id &&
+      (x.eventType == EventType.Remove || x.eventType == EventType.Trigger))
+  }
+
+  def updateJobFinishingEvents(job: Job, newElasticsAllocated: Int = 0,
+                               elasticsRemoved: mutable.HashSet[ClaimDelta] = mutable.HashSet[ClaimDelta]()): Unit = {
+    if(newElasticsAllocated != 0 || elasticsRemoved.nonEmpty){
+      // We have to remove all the incoming simulation events that work on this job.
+      removeAllUpcomingEventsForJob(job)
+    }
+
+    job.calculateProgress(currTime = simulator.currentTime, newTasksAllocated = newElasticsAllocated, tasksRemoved = elasticsRemoved)
+    val jobDuration: Double = job.remainingTime
+
+    simulator.logger.info(loggerPrefix + (if(newElasticsAllocated != 0 || elasticsRemoved.nonEmpty) elasticPrefix else "") +
+      job.loggerPrefix + " Adding finished event after " + jobDuration + " seconds to wake up scheduler.")
+    simulator.cellState.scheduleEndEvents(job.claimDeltas.toSeq, delay = jobDuration)
+    simulator.afterDelay(jobDuration, eventType = EventType.Remove, itemId = job.id) {
+      simulator.logger.info(loggerPrefix + job.loggerPrefix + " Completed after " + (simulator.currentTime - job.jobStartedWorking) + "s. It had " + job.claimDeltas.size + " tasks allocated.")
+      job.finalStatus = JobStatus.Completed
+      job.jobFinishedWorking = simulator.currentTime
+      removePendingJob(job)
+      removeRunningJob(job)
+    }
+  }
+
+  def simulateSchedulingDecision(jobsToAttemptScheduling: ListBuffer[Job]): ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])] = {
+    def flexibleAlgorithm(): ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])] = {
+      val jobsToLaunch: ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])] = new ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])]()
+      val tmpJobsToLaunch: ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])] = new ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])]()
+      var stop: Boolean = false
+      var clusterFreeResources: BigInt = BigInt(privateCellState.availableCpus) * BigInt(privateCellState.availableMem)
+      jobsToAttemptScheduling.foreach(job => {
+        if(job.finalStatus != JobStatus.Completed) {
+          var claimDelta_core = new ListBuffer[ClaimDelta]()
+          var claimDelta_elastic = new ListBuffer[ClaimDelta]()
+          job.numSchedulingAttempts += 1
+
+          if (!stop) {
+            // Create a copy of the jobsToLaunch in tmpJobsToLaunch
+            tmpJobsToLaunch.clear()
+            jobsToLaunch.foreach { case (job1, core, elastic) =>
+              tmpJobsToLaunch += ((job1, new ListBuffer[ClaimDelta]() ++= core, new ListBuffer[ClaimDelta]() ++= elastic))
+            }
+
+            // START ALGORITHM PRESENTED IN THE PAPER
+            //Remove all elastic components from the cell
+            jobsToLaunch.foreach { case (_, _, elastic) =>
+              elastic.foreach(_.unApply(privateCellState))
+              elastic.clear()
+            }
+
+            if (runningQueueAsList.contains(job) && job.coreTasksUnscheduled != 0) {
+              simulator.logger.warn("How can the job be in the running list and have a coreTasksUnscheduled different than 0 (" + job.coreTasksUnscheduled + ")")
+            }
+
+            if (job.coreTasksUnscheduled != 0) {
+              // If the job is not already running, try to scheduled it
+              claimDelta_core = scheduleJob(job, privateCellState, taskType = TaskType.Core)
+              // Check if the core components that can be scheduled satisfy the allocation policy of this scheduler
+              if (!isAllocationSuccessfully(claimDelta_core, job)) {
+                // If not, remove them from the cell
+                claimDelta_core.foreach(_.unApply(privateCellState))
+                claimDelta_core.clear()
+              }
+            }
+            // If we succeeded in scheduling the core components or if the job is already running
+            //    try to schedule the as many elastic components as we can for the jobs in the list
+            if (claimDelta_core.nonEmpty || job.coreTasksUnscheduled == 0) {
+              jobsToLaunch += ((job, claimDelta_core, claimDelta_elastic))
+            }
+            jobsToLaunch.foreach { case (job1, _, elastic) =>
+              claimDelta_elastic = scheduleJob(job1, privateCellState, taskType = TaskType.Elastic)
+              if (claimDelta_elastic.nonEmpty) {
+                elastic.clear()
+                elastic ++= claimDelta_elastic
+              }
+            }
+            val currentFreeResource: BigInt = BigInt(privateCellState.availableCpus) * BigInt(privateCellState.availableMem)
+            if (currentFreeResource >= clusterFreeResources) {
+              stop = true
+              jobsToLaunch.clear()
+              jobsToLaunch ++= tmpJobsToLaunch
+            }
+            clusterFreeResources = currentFreeResource
+            // FINISH ALGORITHM PRESENTED IN THE PAPER
+          }
+        } else
+          simulator.logger.info(loggerPrefix + job.loggerPrefix + " Finished during the thinking time. Do not process it.")
+      })
+      jobsToLaunch
+    }
+
+    def malleableAlgorithm(): ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])] = {
+      val jobsToLaunch: ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])] = new ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])]()
+      val jobsCannotFit: ListBuffer[Job] = new ListBuffer[Job]()
+      jobsToAttemptScheduling.foreach(job => {
+        if (job.finalStatus != JobStatus.Completed) {
+          var claimDelta_core = new ListBuffer[ClaimDelta]()
+          var claimDelta_elastic = new ListBuffer[ClaimDelta]()
+          job.numSchedulingAttempts += 1
+
+          claimDelta_core = scheduleJob(job, privateCellState, taskType = TaskType.Core)
+          if (!isAllocationSuccessfully(claimDelta_core, job)) {
+            claimDelta_core.foreach(_.unApply(privateCellState))
+            claimDelta_core.clear()
+          }
+          if (runningQueueAsList.contains(job) || claimDelta_core.nonEmpty)
+            claimDelta_elastic = scheduleJob(job, privateCellState, taskType = TaskType.Elastic)
+          if (claimDelta_core.nonEmpty || claimDelta_elastic.nonEmpty)
+            jobsToLaunch += ((job, claimDelta_core, claimDelta_elastic))
+          val taskCanFitPerCpus = Math.floor(privateCellState.cpusPerMachine.toDouble / job.cpusPerTask.toDouble) * privateCellState.numMachines
+          val taskCanFitPerMem = Math.floor(privateCellState.memPerMachine.toDouble / job.memPerTask) * privateCellState.numMachines
+          if (taskCanFitPerCpus < job.numTasks || taskCanFitPerMem < job.numTasks) {
+            simulator.logger.warn(loggerPrefix + job.loggerPrefix + " The cell (" + privateCellState.totalCpus + " cpus, " + privateCellState.totalMem +
+              " mem) is not big enough to hold this job all at once which requires " + job.numTasks + " tasks for " + (job.cpusPerTask * job.numTasks) +
+              " cpus and " + (job.memPerTask * job.numTasks) + " mem in total.")
+            jobsCannotFit += job
+          }
+        } else
+          simulator.logger.info(loggerPrefix + job.loggerPrefix + " Finished during the thinking time. Do not process it.")
+      })
+      jobsCannotFit.foreach(job => {
+        removePendingJob(job)
+      })
+      jobsToLaunch
+    }
+
+    def rigidAlgorithm(): ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])] = {
+      val jobsToLaunch: ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])] = new ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])]()
+      val jobsCannotFit: ListBuffer[Job] = new ListBuffer[Job]()
+      jobsToAttemptScheduling.foreach(job => {
+        if(job.finalStatus != JobStatus.Completed){
+          var claimDelta_core = new ListBuffer[ClaimDelta]()
+          var claimDelta_elastic = new ListBuffer[ClaimDelta]()
+          job.numSchedulingAttempts += 1
+
+          claimDelta_core = scheduleJob(job, privateCellState, taskType = TaskType.Core)
+          if (!isAllocationSuccessfully(claimDelta_core, job)) {
+            claimDelta_core.foreach(_.unApply(privateCellState))
+            claimDelta_core.clear()
+          } else {
+            claimDelta_elastic = scheduleJob(job, privateCellState, taskType = TaskType.Elastic)
+            if (claimDelta_elastic.size == job.elasticTasks) {
+              jobsToLaunch += ((job, claimDelta_core, claimDelta_elastic))
+            } else {
+              simulator.logger.info(loggerPrefix + job.loggerPrefix + " Not all services scheduled (" + claimDelta_elastic.size + "/" + job.elasticTasks +
+                "). Rolling back. The cellstate had (" + privateCellState.availableCpus + " cpus, " + privateCellState.availableMem + " mem) free.")
+              simulator.logger.info(loggerPrefix + job.loggerPrefix + " Total resources requested: (" + (job.cpusPerTask * job.elasticTasks) +
+                " cpus, " + (job.memPerTask * job.elasticTasks) + " mem)")
+              claimDelta_elastic.foreach(_.unApply(privateCellState))
+              simulator.logger.info(loggerPrefix + job.loggerPrefix + " The cellstate now have (" + privateCellState.availableCpus + " cpu, " + privateCellState.availableMem + " mem) free.")
+
+              val taskCanFitPerCpus = Math.floor(privateCellState.cpusPerMachine.toDouble / job.cpusPerTask.toDouble) * privateCellState.numMachines
+              val taskCanFitPerMem = Math.floor(privateCellState.memPerMachine.toDouble / job.memPerTask) * privateCellState.numMachines
+              if (taskCanFitPerCpus < job.numTasks || taskCanFitPerMem < job.numTasks) {
+                simulator.logger.warn(loggerPrefix + job.loggerPrefix + " The cell (" + privateCellState.totalCpus + " cpus, " + privateCellState.totalMem +
+                  " mem) is not big enough to hold this job all at once which requires " + job.numTasks + " tasks for " + (job.cpusPerTask * job.numTasks) +
+                  " cpus and " + (job.memPerTask * job.numTasks) + " mem in total.")
+                jobsCannotFit += job
+              }
+            }
+          }
+        } else
+          simulator.logger.info(loggerPrefix + job.loggerPrefix + " Finished during the thinking time. Do not process it.")
+      })
+      jobsToLaunch
+    }
+
+
+    if (PolicyModes.myPolicies.contains(policyMode)) {
+      flexibleAlgorithm()
+    } else if (PolicyModes.elasticPolicies.contains(policyMode)) {
+      malleableAlgorithm()
+    } else{
+      rigidAlgorithm()
+    }
+  }
+
+  def commitSimulation(jobsToLaunch: ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])]): Int = {
+    var serviceDeployed = 0
+    jobsToLaunch.foreach { case (job, inelastic, elastic) =>
+      if (!runningQueueAsList.contains(job)) {
+        if (inelastic.nonEmpty) {
+          val commitResult = simulator.cellState.commit(inelastic)
+          if (commitResult.committedDeltas.nonEmpty) {
+            serviceDeployed += commitResult.committedDeltas.size
+
+            job.addCoreClaimDeltas(commitResult.committedDeltas)
+            numSuccessfulTaskTransactions += commitResult.committedDeltas.size
+            job.finalStatus = JobStatus.Partially_Scheduled
+
+            if (job.firstScheduled) {
+              job.timeInQueueTillFirstScheduled = simulator.currentTime - job.submitted
+              job.firstScheduled = false
+            }
+
+            simulator.logger.info(loggerPrefix + job.loggerPrefix + " Scheduled " + inelastic.size + " tasks, " + job.coreTasksUnscheduled + " remaining.")
+          } else {
+            simulator.logger.warn(loggerPrefix + job.loggerPrefix + " There was a conflict when committing the task allocation to the real cell.")
+          }
+        } else {
+          simulator.logger.info(loggerPrefix + job.loggerPrefix + " No tasks scheduled (" + job.cpusPerTask +
+            " cpu " + job.memPerTask + "mem per task) during this scheduling attempt.")
+        }
+        if (job.coreTasksUnscheduled == 0) {
+          job.jobStartedWorking = simulator.currentTime
+
+          updateJobFinishingEvents(job)
+
+          // All tasks in job scheduled so don't put it back in pendingQueueAsList.
+          job.finalStatus = JobStatus.Fully_Scheduled
+          job.timeInQueueTillFullyScheduled = simulator.currentTime - job.submitted
+
+          addRunningJob(job)
+
+          simulator.logger.info(loggerPrefix + job.loggerPrefix + " Fully-Scheduled (" + job.cpusPerTask + " cpu " + job.memPerTask +
+            " mem per task), after " + job.numSchedulingAttempts + " scheduling attempts.")
+        } else {
+          simulator.logger.info(loggerPrefix + job.loggerPrefix + " Not fully scheduled, " + job.coreTasksUnscheduled + " / " + job.coreTasks +
+            " tasks remain (shape: " + job.cpusPerTask + " cpus, " + job.memPerTask + " mem per task). Leaving it in the queue.")
+        }
+      }
+
+      // We check if all core task are schedule to prevent to schedule elastic tasks if we had a previous conflict with core tasks
+      if (job.coreTasksUnscheduled == 0 && job.elasticTasksUnscheduled > 0) {
+        var elasticTasksLaunched = 0
+        if (elastic.nonEmpty) {
+          val commitResult = simulator.cellState.commit(elastic)
+          if (commitResult.committedDeltas.nonEmpty) {
+            serviceDeployed += commitResult.committedDeltas.size
+
+            elasticTasksLaunched = commitResult.committedDeltas.size
+            assert(job.addElasticClaimDeltas(commitResult.committedDeltas) == elasticTasksLaunched)
+            numSuccessfulTaskTransactions += commitResult.committedDeltas.size
+
+            simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Scheduled " + elasticTasksLaunched + " tasks, " + job.elasticTasksUnscheduled + " remaining.")
+          } else {
+            simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " There was a conflict when committing the task allocation to the real cell.")
+          }
+        } else if (job.elasticTasks > 0) {
+          simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " No tasks scheduled (" + job.cpusPerTask + " cpu " + job.memPerTask +
+            " mem per task) during this scheduling attempt. " + job.elasticTasksUnscheduled + " unscheduled tasks remaining.")
+        }
+        if (elasticTasksLaunched > 0) {
+          updateJobFinishingEvents(job, newElasticsAllocated = elasticTasksLaunched)
+        }
+      }
+
+      // If all the tasks (both core and elastics) are allocated, we remove it from the pending queue
+      if (job.coreTasksUnscheduled == 0 && job.elasticTasksUnscheduled == 0) {
+        removePendingJob(job)
+      }
+    }
+    serviceDeployed
+  }
+
   /**
     * Checks to see if there is currently a job in this scheduler's job queue.
     * If there is, and this scheduler is not currently scheduling a job, then
@@ -193,279 +451,65 @@ class ZoeScheduler(name: String,
     * calling afterDelay().
     */
   def scheduleNextJob(): Unit = {
-    if (!scheduling) {
-      // Remove the Job from the pending queue and running queue, if it was present.
-      pendingQueueAsList = pendingQueueAsList.filter(_.finalStatus != JobStatus.Completed)
-      runningQueueAsList = runningQueueAsList.filter(_.finalStatus != JobStatus.Completed)
+    if (!scheduling && jobQueueSize > 0) {
+      scheduling = true
 
-      if (jobQueueSize > 0) {
-        scheduling = true
+      simulator.logger.info(loggerPrefix + " There are " + jobQueueSize + " jobs in queue and " + runningJobQueueSize + " running.")
+      simulator.logger.info(loggerPrefix + " The global cell state is (" + simulator.cellState.availableCpus + " CPUs, " +
+        simulator.cellState.availableMem + " mem with " + simulator.cellState.claimDeltas.size + " claimDeltas)")
 
-        simulator.logger.info(loggerPrefix + " There are " + jobQueueSize + " jobs in queue and " + runningJobQueueSize + " running.")
-        simulator.logger.info(loggerPrefix + " The global cell state is (" + simulator.cellState.availableCpus + " CPUs, " + simulator.cellState.availableMem + " mem)")
+      val jobsToAttemptScheduling: ListBuffer[Job] = PolicyModes.getJobs(pendingQueueAsList, policyMode, simulator.currentTime)
+      if (policyMode == PolicyModes.Fifo || policyMode == PolicyModes.eFifo)
+        assert(jobsToAttemptScheduling.length == 1, {
+          "For Fifo and eFifo policy the jobsToAttemptScheduling length must be 1 (" + jobsToAttemptScheduling.length + ")"
+        })
 
-        val jobsToAttemptScheduling: ListBuffer[Job] = PolicyModes.getJobs(pendingQueueAsList, policyMode, simulator.currentTime)
-        if (policyMode == PolicyModes.Fifo || policyMode == PolicyModes.eFifo)
-          assert(jobsToAttemptScheduling.length == 1, {
-            "For Fifo and eFifo policy the jobsToAttemptScheduling length must be 1 (" + jobsToAttemptScheduling.length + ")"
-          })
+      if(enableCellStateSnapshot){
+        syncCellState()
+        simulator.logger.info(loggerPrefix + " The private cell state is (" + privateCellState.availableCpus + " CPUs, "
+          + privateCellState.availableMem + " mem with " + privateCellState.claimDeltas.size + " claimDeltas)")
+      }
 
-        totalQueueSize += jobQueueSize
-        numSchedulingCalls += 1
+      val jobThinkTime: Double = jobsToAttemptScheduling.map(getThinkTime).sum
+      lazy val allJobPrefix = "[" + jobsToAttemptScheduling.length + " | Job" + jobsToAttemptScheduling.foldLeft("")((b, a) => b + " " + a.id + " (" + a.workloadName + ")") + "]"
 
-        if(enableCellStateSnapshot){
+      simulator.logger.info(loggerPrefix + allJobPrefix + " Started " + jobThinkTime + " seconds of scheduling thinktime.")
+      simulator.afterDelay(jobThinkTime) {
+        simulator.logger.info(loggerPrefix + allJobPrefix + " Finished " + jobThinkTime + " seconds of scheduling thinktime.")
+
+        // This is in case we disable the creation of the snapshot for the cellState
+        // Good option when using more complex algorithm that have another "process" or loop that modify the resources in the cellState
+        if(!enableCellStateSnapshot){
           syncCellState()
-          simulator.logger.info(loggerPrefix + " The private cell state is (" + privateCellState.availableCpus + " CPUs, " + privateCellState.availableMem + " mem)")
         }
 
-        val jobThinkTime: Double = jobsToAttemptScheduling.map(getThinkTime).sum
-        lazy val allJobPrefix = "[" + jobsToAttemptScheduling.length + " | Job" + jobsToAttemptScheduling.foldLeft("")((b, a) => b + " " + a.id + " (" + a.workloadName + ")") + "]"
-        lazy val elasticPrefix = "[Elastic]"
+        /*
+         * Let's perform a simulation of the jobs, with the same priority, that could be allocated on the cluster
+         */
+        val jobsToLaunch: ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])] = simulateSchedulingDecision(jobsToAttemptScheduling)
 
-        simulator.logger.info(loggerPrefix + allJobPrefix + " Started " + jobThinkTime + " seconds of scheduling thinktime.")
-        simulator.afterDelay(jobThinkTime) {
-          simulator.logger.info(loggerPrefix + allJobPrefix + " Finished " + jobThinkTime + " seconds of scheduling thinktime.")
+        /*
+         * After the simulation, we will deploy the allocations on the real cluster
+         */
+        simulator.logger.info(loggerPrefix + allJobPrefix + " There are " + jobsToLaunch.size + " jobs that can be allocated.")
+        val serviceDeployed = commitSimulation(jobsToLaunch)
 
-          // This is in case we disable the creation of the snapshot for the cellState
-          // Good option when using more complex algorithm that have another "process" or loop that modify the resources in the cellState
-          if(!enableCellStateSnapshot){
-            syncCellState()
-          }
 
-          /*
-           * Let's perform a simulation of the jobs, with the same priority, that could be allocated on the cluster
-           */
-          val jobsToLaunch: ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])] = new ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])]()
-          val tmpJobsToLaunch: ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])] = new ListBuffer[(Job, ListBuffer[ClaimDelta], ListBuffer[ClaimDelta])]()
-
-          val jobsCannotFit: ListBuffer[Job] = new ListBuffer[Job]()
-
-          var stop: Boolean = false
-          var clusterFreeResources: Long = privateCellState.availableCpus * privateCellState.availableMem
-
-          jobsToAttemptScheduling.foreach(job => {
-            var claimDelta_core = new ListBuffer[ClaimDelta]()
-            var claimDelta_elastic = new ListBuffer[ClaimDelta]()
-            job.numSchedulingAttempts += 1
-
-            if (PolicyModes.myPolicies.contains(policyMode)) {
-              if (!stop) {
-                // Create a copy of the jobsToLaunch in tmpJobsToLaunch
-                tmpJobsToLaunch.clear()
-                jobsToLaunch.foreach { case (job1, core, elastic) =>
-                  tmpJobsToLaunch += ((job1, new ListBuffer[ClaimDelta]() ++= core, new ListBuffer[ClaimDelta]() ++= elastic))
-                }
-
-                // START ALGORITHM PRESENTED IN THE PAPER
-                //Remove all elastic components from the cell
-                jobsToLaunch.foreach { case (_, _, elastic) =>
-                  elastic.foreach(_.unApply(privateCellState))
-                  elastic.clear()
-                }
-
-                if(runningQueueAsList.contains(job) && job.coreTasksUnscheduled != 0){
-                  simulator.logger.warn("How can the job be in the running list and have a coreTasksUnscheduled different than 0 (" + job.coreTasksUnscheduled + ")")
-                }
-
-                if (job.coreTasksUnscheduled != 0) {
-                  // If the job is not already running, try to scheduled it
-                  claimDelta_core = scheduleJob(job, privateCellState, taskType = TaskType.Core)
-                  // Check if the core components that can be scheduled satisfy the allocation policy of this scheduler
-                  if (!isAllocationSuccessfully(claimDelta_core, job)) {
-                    // If not, remove them from the cell
-                    claimDelta_core.foreach(_.unApply(privateCellState))
-                    claimDelta_core.clear()
-                  }
-                }
-                // If we succeeded in scheduling the core components or if the job is already running
-                //    try to schedule the as many elastic components as we can for the jobs in the list
-                if (claimDelta_core.nonEmpty || job.coreTasksUnscheduled == 0) {
-                  jobsToLaunch += ((job, claimDelta_core, claimDelta_elastic))
-                }
-                jobsToLaunch.foreach { case (job1, _, elastic) =>
-                  claimDelta_elastic = scheduleJob(job1, privateCellState, taskType = TaskType.Elastic)
-                  if (claimDelta_elastic.nonEmpty) {
-                    elastic.clear()
-                    elastic ++= claimDelta_elastic
-                  }
-                }
-                val currentFreeResource: Long = privateCellState.availableCpus * privateCellState.availableMem
-                if (currentFreeResource >= clusterFreeResources) {
-                  stop = true
-                  jobsToLaunch.clear()
-                  jobsToLaunch ++= tmpJobsToLaunch
-                }
-                clusterFreeResources = currentFreeResource
-                // FINISH ALGORITHM PRESENTED IN THE PAPER
-              }
-            } else if (PolicyModes.elasticPolicies.contains(policyMode)) {
-              claimDelta_core = scheduleJob(job, privateCellState, taskType = TaskType.Core)
-              if (!isAllocationSuccessfully(claimDelta_core, job)) {
-                claimDelta_core.foreach(_.unApply(privateCellState))
-                claimDelta_core.clear()
-              }
-              if (runningQueueAsList.contains(job) || claimDelta_core.nonEmpty)
-                claimDelta_elastic = scheduleJob(job, privateCellState, taskType = TaskType.Elastic)
-              if (claimDelta_core.nonEmpty || claimDelta_elastic.nonEmpty)
-                jobsToLaunch += ((job, claimDelta_core, claimDelta_elastic))
-              val taskCanFitPerCpus = Math.floor(privateCellState.cpusPerMachine.toDouble / job.cpusPerTask.toDouble) * privateCellState.numMachines
-              val taskCanFitPerMem = Math.floor(privateCellState.memPerMachine.toDouble / job.memPerTask) * privateCellState.numMachines
-              if (taskCanFitPerCpus < job.numTasks || taskCanFitPerMem < job.numTasks) {
-                simulator.logger.warn(loggerPrefix + job.loggerPrefix + " The cell (" + privateCellState.totalCpus + " cpus, " + privateCellState.totalMem +
-                  " mem) is not big enough to hold this job all at once which requires " + job.numTasks + " tasks for " + (job.cpusPerTask * job.numTasks) +
-                  " cpus and " + (job.memPerTask * job.numTasks) + " mem in total.")
-                jobsCannotFit += job
-              }
-            } else if (PolicyModes.rigidPolicies.contains(policyMode)) {
-              claimDelta_core = scheduleJob(job, privateCellState, taskType = TaskType.Core)
-              if (!isAllocationSuccessfully(claimDelta_core, job)) {
-                claimDelta_core.foreach(_.unApply(privateCellState))
-                claimDelta_core.clear()
-              } else {
-                claimDelta_elastic = scheduleJob(job, privateCellState, taskType = TaskType.Elastic)
-                if (claimDelta_elastic.size == job.elasticTasks) {
-                  jobsToLaunch += ((job, claimDelta_core, claimDelta_elastic))
-                } else {
-                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " Not all services scheduled (" + claimDelta_elastic.size + "/" + job.elasticTasks +
-                    "). Rolling back. The cellstate had (" + privateCellState.availableCpus + " cpus, " + privateCellState.availableMem + " mem) free.")
-                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " Total resources requested: (" + (job.cpusPerTask * job.elasticTasks) +
-                    " cpus, " + (job.memPerTask * job.elasticTasks) + " mem)")
-                  claimDelta_elastic.foreach(_.unApply(privateCellState))
-                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " The cellstate now have (" + privateCellState.availableCpus + " cpu, " + privateCellState.availableMem + " mem) free.")
-
-                  val taskCanFitPerCpus = Math.floor(privateCellState.cpusPerMachine.toDouble / job.cpusPerTask.toDouble) * privateCellState.numMachines
-                  val taskCanFitPerMem = Math.floor(privateCellState.memPerMachine.toDouble / job.memPerTask) * privateCellState.numMachines
-                  if (taskCanFitPerCpus < job.numTasks || taskCanFitPerMem < job.numTasks) {
-                    simulator.logger.warn(loggerPrefix + job.loggerPrefix + " The cell (" + privateCellState.totalCpus + " cpus, " + privateCellState.totalMem +
-                      " mem) is not big enough to hold this job all at once which requires " + job.numTasks + " tasks for " + (job.cpusPerTask * job.numTasks) +
-                      " cpus and " + (job.memPerTask * job.numTasks) + " mem in total.")
-                    jobsCannotFit += job
-                  }
-                }
-              }
-            }
-          })
-          jobsCannotFit.foreach(job => {
-            removePendingJob(job)
-          })
-
-          /*
-           * After the simulation, we will deploy the allocations on the real cluster
-           */
-          simulator.logger.info(loggerPrefix + allJobPrefix + " There are " + jobsToLaunch.size + " jobs that can be allocated.")
-          var serviceDeployed = 0
-          jobsToLaunch.foreach { case (job, inelastic, elastic) =>
-            if (!runningQueueAsList.contains(job)) {
-              if (inelastic.nonEmpty) {
-                val commitResult = simulator.cellState.commit(inelastic)
-                if (commitResult.committedDeltas.nonEmpty) {
-                  serviceDeployed += commitResult.committedDeltas.size
-
-                  job.addCoreClaimDeltas(commitResult.committedDeltas)
-                  job.finalStatus = JobStatus.Partially_Scheduled
-
-                  if (job.firstScheduled) {
-                    job.timeInQueueTillFirstScheduled = simulator.currentTime - job.submitted
-                    job.firstScheduled = false
-                  }
-
-                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " Scheduled " + inelastic.size + " tasks, " + job.coreTasksUnscheduled + " remaining.")
-                } else {
-                  simulator.logger.warn(loggerPrefix + job.loggerPrefix + " There was a conflict when committing the task allocation to the real cell.")
-                }
-              } else {
-                simulator.logger.info(loggerPrefix + job.loggerPrefix + " No tasks scheduled (" + job.cpusPerTask +
-                  " cpu " + job.memPerTask + "mem per task) during this scheduling attempt, recording wasted time.")
-              }
-              if (job.coreTasksUnscheduled == 0) {
-                job.jobStartedWorking = simulator.currentTime
-                val jobDuration: Double = job.estimateJobDuration(simulator.currentTime)
-
-                simulator.afterDelay(jobDuration, eventType = EventType.Remove, itemId = job.id) {
-                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " Completed after " + (simulator.currentTime - job.jobStartedWorking) + "s. It had " + job.claimDeltas.size + " tasks allocated.")
-                  job.finalStatus = JobStatus.Completed
-                  job.jobFinishedWorking = simulator.currentTime
-                  removePendingJob(job)
-                  removeRunningJob(job)
-                }
-                simulator.logger.info(loggerPrefix + job.loggerPrefix + " Adding finished event after " + jobDuration + " seconds to wake up scheduler.")
-                simulator.cellState.scheduleEndEvents(job.coreClaimDeltas.toSeq, delay = jobDuration)
-
-                // All tasks in job scheduled so don't put it back in pendingQueueAsList.
-                job.finalStatus = JobStatus.Fully_Scheduled
-                job.timeInQueueTillFullyScheduled = simulator.currentTime - job.submitted
-
-                addRunningJob(job)
-
-                simulator.logger.info(loggerPrefix + job.loggerPrefix + " Fully-Scheduled (" + job.cpusPerTask + " cpu " + job.memPerTask +
-                  " mem per task), after " + job.numSchedulingAttempts + " scheduling attempts.")
-              } else {
-                simulator.logger.info(loggerPrefix + job.loggerPrefix + " Not fully scheduled, " + job.coreTasksUnscheduled + " / " + job.coreTasks +
-                  " tasks remain (shape: " + job.cpusPerTask + " cpus, " + job.memPerTask + " mem per task). Leaving it in the queue.")
-              }
-            }
-
-            if (job.finalStatus == JobStatus.Completed) {
-              simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Finished during the thinking time. Do not process it.")
-            } else
-            // We check if all core task are schedule to prevent to schedule elastic tasks if we had a previous conflict with core tasks
-            if (job.coreTasksUnscheduled == 0 && job.elasticTasksUnscheduled > 0) {
-              var elasticTasksLaunched = 0
-              if (elastic.nonEmpty) {
-                val commitResult = simulator.cellState.commit(elastic)
-                if (commitResult.committedDeltas.nonEmpty) {
-                  serviceDeployed += commitResult.committedDeltas.size
-
-                  elasticTasksLaunched = commitResult.committedDeltas.size
-                  val elasticTasksAdded = job.addElasticClaimDeltas(commitResult.committedDeltas)
-                  assert(elasticTasksAdded == elasticTasksLaunched)
-
-                  simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Scheduled " + elasticTasksLaunched + " tasks, " + job.elasticTasksUnscheduled + " remaining.")
-                } else {
-                  simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " There was a conflict when committing the task allocation to the real cell.")
-                }
-              } else if (job.elasticTasks > 0) {
-                simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " No tasks scheduled (" + job.cpusPerTask + " cpu " + job.memPerTask +
-                  " mem per task) during this scheduling attempt, recording wasted time. " + job.elasticTasksUnscheduled + " unscheduled tasks remaining.")
-              }
-              if (elasticTasksLaunched > 0) {
-                val jobLeftDuration: Double = job.estimateJobDuration(currTime = simulator.currentTime, newTasksAllocated = elasticTasksLaunched)
-
-                // We have to remove all the incoming simulation events that work on this job.
-                simulator.removeIf(x => x.eventID == job.id &&
-                  (x.eventType == EventType.Remove || x.eventType == EventType.Trigger))
-
-                simulator.afterDelay(jobLeftDuration, eventType = EventType.Remove, itemId = job.id) {
-                  simulator.logger.info(loggerPrefix + job.loggerPrefix + " Completed after " + (simulator.currentTime - job.jobStartedWorking) + "s. It had " + job.claimDeltas.size + " tasks allocated.")
-                  job.finalStatus = JobStatus.Completed
-                  job.jobFinishedWorking = simulator.currentTime
-                  removePendingJob(job)
-                  removeRunningJob(job)
-                }
-                simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Adding finished event after " + jobLeftDuration + " seconds to wake up scheduler.")
-                simulator.cellState.scheduleEndEvents(job.claimDeltas.toSeq, delay = jobLeftDuration)
-              }
-            }
-
-            if (job.finalStatus == JobStatus.Completed || (job.coreTasksUnscheduled == 0 && job.elasticTasksUnscheduled == 0)) {
-              removePendingJob(job)
-            }
-          }
-
-          scheduling = false
-          if (serviceDeployed == 0) {
-            jobAttempt += 1
-          }
-          if (jobAttempt == 2) {
-            jobAttempt = 0
-            simulator.logger.info(loggerPrefix + " Exiting because we could not schedule the job. This means that not enough resources were available.")
-          } else
+        scheduling = false
+        if (serviceDeployed == 0) {
+          // Checking if the privateCell is in line with the realCell
+          // If we find some discrepancy, this means that somethink happened while I was thinking
+          // Therefore I can try to schedule the jobs again
+          if (simulator.cellState.availableMem > privateCellState.availableMem ||
+            simulator.cellState.availableCpus > privateCellState.availableCpus) {
+            simulator.logger.info(loggerPrefix + " The real cell has more resources than the private cell, this means that some claimDelta finished during the thinking time. Trying to scheduling jobs again.")
             scheduleNextJob()
+          } else
+            simulator.logger.info(loggerPrefix + " Exiting because we could not schedule the job. This means that not enough resources were available.")
         }
       }
     }
   }
-
 
 }
 

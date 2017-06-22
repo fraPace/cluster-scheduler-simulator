@@ -76,7 +76,7 @@ object Simulation extends LazyLogging {
     val runNewSpark = false
     val runMesos = false
     val runOmega = false
-    val runZoe = false
+    val runZoe = true
     val runZoePreemption = false
     val runZoeDynamic = true
 
@@ -155,10 +155,10 @@ object Simulation extends LazyLogging {
 
 //            PolicyModes.Fifo,
 //            PolicyModes.eFifo,
-      PolicyModes.hFifo //,
-      //      PolicyModes.PSJF,
+      PolicyModes.hFifo//,
+//            PolicyModes.PSJF,
       //      PolicyModes.ePSJF,
-      //      PolicyModes.hPSJF//,
+//            PolicyModes.hPSJF//,
       //      PolicyModes.SRPT,
       //      PolicyModes.eSRPT,
       //      PolicyModes.hSRPT//,

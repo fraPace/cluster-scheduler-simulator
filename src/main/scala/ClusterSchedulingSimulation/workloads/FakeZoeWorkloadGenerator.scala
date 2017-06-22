@@ -1,6 +1,6 @@
 package ClusterSchedulingSimulation.workloads
 
-import ClusterSchedulingSimulation.core.{DistCache, Job, Workload, WorkloadGenerator}
+import ClusterSchedulingSimulation.core.{Job, Workload, WorkloadGenerator}
 
 /**
   * Generates jobs at a uniform rate, of a uniform size.

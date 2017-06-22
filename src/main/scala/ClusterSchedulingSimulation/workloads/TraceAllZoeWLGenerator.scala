@@ -96,7 +96,7 @@ class TraceAllZoeWLGenerator(val workloadName: String,
       // for the value sampled from the distribution.
       val newinterArrivalTime = updatedAvgJobInterarrivalTime.getOrElse(1.0) *
         DistCache.getQuantile(interarrivalDist, randomNumberGenerator.nextFloat) * 100
-      if (newinterArrivalTime + nextJobSubmissionTime < timeWindow * 0.5)
+      if (newinterArrivalTime + nextJobSubmissionTime < timeWindow * 0.1)
         nextJobSubmissionTime += newinterArrivalTime
       else {
         logger.warn("[" + workloadName + "] job submission going outside the time window. Resetting it.")

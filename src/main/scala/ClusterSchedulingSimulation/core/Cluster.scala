@@ -61,10 +61,7 @@ class CellState(val numMachines: Int,
   val totalMem: Long = numMachines * memPerMachine
   def availableMem: Long = totalMem - (totalOccupiedMem + totalLockedMem)
 
-  val claimDeltasPerMachine: Array[Vector[ClaimDelta]] = new Array[Vector[ClaimDelta]](numMachines)
-  for (i <- 0 until numMachines){
-    claimDeltasPerMachine(i) =  Vector[ClaimDelta]()
-  }
+  val claimDeltasPerMachine: Array[Vector[ClaimDelta]] = Array.fill(numMachines)(Vector[ClaimDelta]())
 
   def cpuAvgUtilization(): Float = {
     var _sum: Long = 0
@@ -249,6 +246,10 @@ class CellState(val numMachines: Int,
     newCellState.totalOccupiedMem = totalOccupiedMem
     newCellState.totalLockedCpus = totalLockedCpus
     newCellState.totalLockedMem = totalLockedMem
+
+    newCellState.claimDeltas ++= claimDeltas
+
+    newCellState.simulator  = simulator
     newCellState
   }
 
@@ -334,9 +335,9 @@ class CellState(val numMachines: Int,
       val realDelay = if (delay == -1) appliedDelta.duration else delay
       if (realDelay > maxDelay) maxDelay = realDelay
       simulator.afterDelay(realDelay, eventType = EventType.Remove, itemId = job.id) {
-        appliedDelta.unApply(simulator.cellState)
         simulator.logger.info(appliedDelta.scheduler.loggerPrefix + jobPrefix + " A task finished after " + realDelay + "s. Freeing " +
           appliedDelta.currentCpus + " CPUs, " + appliedDelta.currentMem + " mem. Available: " + availableCpus + " CPUs, " + availableMem + " mem.")
+        appliedDelta.unApply(simulator.cellState)
       }
     })
     jobs.foreach(job => {

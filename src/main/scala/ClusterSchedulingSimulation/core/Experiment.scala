@@ -433,6 +433,8 @@ class ExperimentRun(
     var totalSchedulingAttempts: Long = 0
     var totalJobCrashed: Long = 0
     var totalJobCrashedAtLeastOnce: Long = 0
+    var totalTasksKilled: Long = 0
+    var totalTasksCrashed: Long = 0
     // Save repeated stats about workloads.
     workloads.foreach(workload => {
       val workloadStats = ExperimentResultSet.
@@ -481,8 +483,10 @@ class ExperimentRun(
       var workloadTotalJobTurnaroudTime: Double = 0.0
       var workloadCountJobFinished: Long = 0
       var workloadTotalJobNotScheduled: Long = 0
-      var jobCrashed = 0
-      var jobCrashedAtLeastOnce = 0
+      var jobCrashed: Long = 0
+      var jobCrashedAtLeastOnce: Long = 0
+      var workloadTotalTasksCrashed: Long = 0
+      var workloadTotalTasksKilled: Long = 0
       val baseWorkloadStats = ExperimentResultSet.
         ExperimentEnv.BaseWorkloadStats.newBuilder()
       baseWorkloadStats.setWorkloadName(workload.name)
@@ -497,6 +501,9 @@ class ExperimentRun(
           workloadCountJobFinished += 1
         } else if (job.isNotScheduled)
           workloadTotalJobNotScheduled += 1
+
+        workloadTotalTasksCrashed += job.numTasksCrashed
+        workloadTotalTasksKilled += job.numTasksKilled
 
         workloadTotalJobQueueTime += job.timeInQueueTillFirstScheduled
         workloadTotalJobRampUpTime += job.timeInQueueTillFullyScheduled - job.timeInQueueTillFirstScheduled
@@ -531,12 +538,15 @@ class ExperimentRun(
       workloadStats.setAvgJobRampUpTime(workloadTotalJobRampUpTime / workload.getJobs.size.toDouble)
       totalJobCrashed += jobCrashed
       totalJobCrashedAtLeastOnce += jobCrashedAtLeastOnce
+      totalTasksCrashed += workloadTotalTasksCrashed
+      totalTasksKilled += workloadTotalTasksKilled
 
       // Output to logger
       logger.info("[" + name + "][Stats][" + workload.name + "] Avg Turnaround: %.2f".format(workloadStats.getAvgJobTurnaroundTime) + " | Avg Execution: " + workloadStats.getAvgJobExecutionTime +
         " | Avg Queue: " + workloadStats.getAvgJobQueueTimesTillFirstScheduled + " | Avg RampUp: " + workloadStats.getAvgJobRampUpTime + " | Scheduled(Not): " + workloadStats.getNumJobsScheduled +
         "(" + workloadTotalJobNotScheduled + ") Finished: " + workloadCountJobFinished + " Crashed(AtLeastOnce): " + jobCrashed + "(" + jobCrashedAtLeastOnce + ") Total: " + workloadStats.getNumJobs +
-        "| Timeouts: " + workloadStats.getNumJobsTimedOutScheduling + " | Scheduling Attempts: " + schedulingAttempts)
+        "| Timeouts: " + workloadStats.getNumJobsTimedOutScheduling + " | Scheduling Attempts: " + schedulingAttempts +
+        " | Tasks Killed: " + workloadTotalTasksKilled + " Crashed: " + workloadTotalTasksCrashed)
       totalJobTurnaroundTime += workloadTotalJobTurnaroudTime
       totalJobExecutionTime += workloadTotalJobExecutionTime
       totalJobFinished += workloadCountJobFinished
@@ -547,6 +557,7 @@ class ExperimentRun(
       experimentResult.addWorkloadStats(workloadStats)
     })
 
+
     // Record workload specific details about the parameter sweeps.
     experimentResult.setSweepWorkload(workloadToSweepOver)
     experimentResult.setAvgJobInterarrivalTime(
@@ -556,8 +567,10 @@ class ExperimentRun(
 
     var totalJobsLeftInQueue: Long = 0
     var totalAvgQueueSize: Double = 0
+    var totalAvgRunningSize: Double = 0
     var totalCpuUtilizationConflicts: Long = 0
     var totalMemoryUtilizationConflicts: Long = 0
+    var totalTasksScheduled: Long = 0
     // Save repeated stats about schedulers.
     simulator.schedulers.values.foreach(scheduler => {
       val schedulerStats =
@@ -641,13 +654,16 @@ class ExperimentRun(
       // Counts of task transaction successes and failures.
       schedulerStats.setNumSuccessfulTaskTransactions(
         scheduler.numSuccessfulTaskTransactions)
+      totalTasksScheduled += scheduler.numSuccessfulTaskTransactions
+
       schedulerStats.setNumFailedTaskTransactions(
         scheduler.numFailedTaskTransactions)
 
       schedulerStats.setIsMultiPath(scheduler.isMultiPath)
       schedulerStats.setNumJobsLeftInQueue(scheduler.jobQueueSize)
       totalJobsLeftInQueue += schedulerStats.getNumJobsLeftInQueue
-      totalAvgQueueSize += scheduler.avgQueueSize
+      totalAvgQueueSize += simulator.avgPendingQueueSize(scheduler.name)
+      totalAvgRunningSize += simulator.avgRunningQueueSize(scheduler.name)
       schedulerStats.setFailedFindVictimAttempts(
         scheduler.failedFindVictimAttempts)
 
@@ -678,14 +694,16 @@ class ExperimentRun(
     logger.info("[" + name + "][Stats] Avg Turnaround: %.2f".format(totalJobTurnaroundTime / totalJobFinished.toDouble) + " | Avg Execution: " + totalJobExecutionTime / totalJobFinished.toDouble +
       " | Avg Queue: " + totalAvgQueueTime / totalJobs.toDouble + " | Avg RampUp: " + totalAvgRampUpTime / totalJobs.toDouble + " | Scheduled(Not): " + totalJobScheduled +
       "(" + totalJobNotScheduled + ") Fully: " + totalJobFinished + " Total: " + totalJobs + " | Timeouts: " + totalTimeouts + " | Scheduling Attempts: " + totalSchedulingAttempts)
-    logger.info("[" + name + "][Stats][Queues] Jobs Throughput: %.2f".format(totalJobFinished / simulatorRunTime) + " | Left in queue: " + totalJobsLeftInQueue + " | Avg Queue Size: " + totalAvgQueueSize / simulator.schedulers.size.toDouble)
+    logger.info("[" + name + "][Stats][Queues] Jobs Throughput: %.2f".format(totalJobFinished / simulatorRunTime) + " | Left in queue: " + totalJobsLeftInQueue +
+      " | Avg Queue Size: " + totalAvgQueueSize / simulator.schedulers.size.toDouble + " | Avg Running Size: " + totalAvgRunningSize / simulator.schedulers.size.toDouble)
     logger.info("[" + name + "][Stats][Allocation] Avg CPU(Wasted): %.2f".format(experimentResult.getCellStateAvgCpuAllocation)  + "(%.2f)".format(simulator.avgCpuAllocationWasted) +
       " | Avg Mem(Wasted): %.2f".format(experimentResult.getCellStateAvgMemAllocation) + "(%.2f)".format(simulator.avgMemAllocationWasted))
     logger.info("[" + name + "][Stats][Utilization] Avg CPU(Wasted): %.2f".format(experimentResult.getCellStateAvgCpuUtilization) + "(%.2f)".format(simulator.avgCpuUtilizationWasted) +
       " | Avg Mem(Wasted): %.2f".format(experimentResult.getCellStateAvgMemUtilization) + "(%.2f)".format(simulator.avgMemUtilizationWasted))
     logger.info("[" + name + "][Stats][Dynamic] CPU Conflicts: " + totalCpuUtilizationConflicts + " | Mem Conflicts: " + totalMemoryUtilizationConflicts +
       " | Jobs Crashed: " + totalJobCrashed + " (" + (totalJobCrashed / totalJobScheduled.toDouble * 100) + "%)" +
-      " | Job Crashed At Least Once: " + totalJobCrashedAtLeastOnce + " (%.2f%%)".format(totalJobCrashedAtLeastOnce / totalJobScheduled.toDouble * 100) )
+      " | Job Crashed At Least Once: " + totalJobCrashedAtLeastOnce + " (%.2f%%)".format(totalJobCrashedAtLeastOnce / totalJobScheduled.toDouble * 100)  +
+      " | Tasks Total Scheduled: " + totalTasksScheduled + " Killed: " + totalTasksKilled + " Crashed: " + totalTasksCrashed)
 
 
     experimentResult.build()

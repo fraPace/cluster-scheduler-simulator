@@ -124,12 +124,12 @@ class ZoePreemptionScheduler(name: String,
       perTaskThinkTimes.mkString(";")))
 
   var pendingQueueAsList = new ListBuffer[Job]()
-  override def jobQueueSize: Long = pendingQueueAsList.count(_ != null)
+  override def jobQueueSize: Int = pendingQueueAsList.count(_ != null)
 //  var pendingQueueIterator = pendingQueueAsList.iterator
   var numJobsInQueue: Int = 0
 
   var runningQueueAsList = new ListBuffer[Job]()
-  override def runningJobQueueSize: Long = runningQueueAsList.count(_ != null)
+  override def runningJobQueueSize: Int = runningQueueAsList.count(_ != null)
   var numRunningJobs: Int = 0
 
   //  var moldableQueueLength: Int = 0
@@ -503,8 +503,9 @@ class ZoePreemptionScheduler(name: String,
 
         var jobsToAttemptScheduling: ListBuffer[Job] = getJobs(pendingQueueAsList, simulator.currentTime)
         if(policyMode == PolicyModes.Fifo || policyMode == PolicyModes.hFifo)
-          assert(jobsToAttemptScheduling.length == 1,
-            "For Fifo like policy the jobsToAttemptScheduling length must be 1 (%d)".format(jobsToAttemptScheduling.length))
+          assert(jobsToAttemptScheduling.length == 1, {
+            "For Fifo like policy the jobsToAttemptScheduling length must be 1 (%d)".format(jobsToAttemptScheduling.length)
+          })
         if(PolicyModes.myPolicies.contains(policyMode)){
           if (jobsToAttemptScheduling.size > 1)
             jobsToAttemptScheduling = jobsToAttemptScheduling.sortWith(_.numTasks > _.numTasks)
@@ -523,9 +524,6 @@ class ZoePreemptionScheduler(name: String,
 //          }
 //        }
 //        previousJob = jobsToAttemptScheduling.head
-
-        totalQueueSize += numJobsInQueue
-        numSchedulingCalls += 1
 
         syncCellState()
         simulator.logger.info(schedulerPrefix + " The cell state is (%f cpus, %f mem)".format(privateCellState.availableCpus, privateCellState.availableMem))
@@ -778,12 +776,13 @@ class ZoePreemptionScheduler(name: String,
 //                (x.eventType == EventTypes.Remove || x.eventType == EventTypes.Trigger))
 //            }else
             if(jobToPreempt.elasticDeltasToPreempt.nonEmpty){
-              val jobLeftDuration: Double = job.estimateJobDuration(currTime = simulator.currentTime, tasksRemoved = elasticClaimDeltasToPreempt.size)
+              job.calculateProgress(currTime = simulator.currentTime, tasksRemoved = mutable.HashSet[ClaimDelta]() ++ elasticClaimDeltasToPreempt)
+              val jobLeftDuration: Double = job.remainingTime
 
               job.jobFinishedWorking = simulator.currentTime + jobLeftDuration
 
               // We have to remove all the incoming simulation events that work on this job.
-              simulator.removeIf(x => x.eventID == job.id &&
+              simulator.removeEventsIf(x => x.eventID == job.id &&
                 (x.eventType == EventType.Remove || x.eventType == EventType.Trigger))
 
               simulator.afterDelay(jobLeftDuration, eventType = EventType.Remove, itemId = job.id) {
@@ -846,7 +845,8 @@ class ZoePreemptionScheduler(name: String,
               }
               if (job.coreTasksUnscheduled == 0) {
                 job.jobStartedWorking = simulator.currentTime
-                val jobDuration: Double = job.estimateJobDuration(simulator.currentTime)
+                job.calculateProgress(simulator.currentTime)
+                val jobDuration: Double = job.remainingTime
                 job.jobFinishedWorking = simulator.currentTime + jobDuration
 
                 simulator.afterDelay(jobDuration, eventType = EventType.Remove, itemId = job.id) {
@@ -916,12 +916,13 @@ class ZoePreemptionScheduler(name: String,
                     job.elasticTasksUnscheduled))
               }
               if (elasticTasksLaunched > 0) {
-                val jobLeftDuration: Double = job.estimateJobDuration(currTime = simulator.currentTime, newTasksAllocated = elasticTasksLaunched)
+                job.calculateProgress(currTime = simulator.currentTime, newTasksAllocated = elasticTasksLaunched)
+                val jobLeftDuration: Double = job.remainingTime
 
                 job.jobFinishedWorking = simulator.currentTime + jobLeftDuration
 
                 // We have to remove all the incoming simulation events that work on this job.
-                simulator.removeIf(x => x.eventID == job.id &&
+                simulator.removeEventsIf(x => x.eventID == job.id &&
                   (x.eventType == EventType.Remove || x.eventType == EventType.Trigger))
 
                 simulator.afterDelay(jobLeftDuration, eventType = EventType.Remove, itemId = job.id) {
