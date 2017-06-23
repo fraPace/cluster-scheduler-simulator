@@ -44,9 +44,9 @@ object Workloads {
   val scaleFactor = 1
   val introduceError = false
 
-  val workloadSize = 500
+  val workloadSize = 100
 
-  val globalNumMachines: Int = 5 * scaleFactor
+  val globalNumMachines: Int = 1 * scaleFactor
   val globalCpusPerMachine: Long = 32 * 1000L // value must be in millicores
   val globalMemPerMachine: Long = 128 * Constant.GiB //value must be in bytes
 
