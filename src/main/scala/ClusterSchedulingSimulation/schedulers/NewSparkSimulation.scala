@@ -147,7 +147,7 @@ class NewSparkScheduler(name: String,
       simulator.afterDelay(thinkTime) {
         simulator.logger.info(("Scheduler %s finished scheduling job %d. " +
           "Attempting to schedule next job in scheduler's " +
-          "pendingQueue.").format(name, job.id))
+          "_pendingQueue.").format(name, job.id))
         job.numSchedulingAttempts += 1
         job.numTaskSchedulingAttempts += job.tasksUnscheduled
 
@@ -209,7 +209,7 @@ class NewSparkScheduler(name: String,
             addJob(job)
           }
         } else {
-          // All tasks in job scheduled so don't put it back in pendingQueue.
+          // All tasks in job scheduled so don't put it back in _pendingQueue.
           jobEventType = "fully-scheduled"
         }
         if (!jobEventType.equals("")) {

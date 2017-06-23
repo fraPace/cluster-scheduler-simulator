@@ -200,7 +200,7 @@ class OmegaScheduler(name: String,
   /**
     * Schedule job and submit a transaction to common cellstate for
     * it. If not all tasks in the job are successfully committed,
-    * put it back in the pendingQueue to be scheduled again.
+    * put it back in the _pendingQueue to be scheduled again.
     */
   def scheduleNextJobAction(): Unit = {
     if (!scheduling && pendingQueue.nonEmpty) {
@@ -302,7 +302,7 @@ class OmegaScheduler(name: String,
           }
         } else {
           job.jobFinishedWorking = simulator.currentTime + job.taskDuration
-          // All tasks in job scheduled so don't put it back in pendingQueue.
+          // All tasks in job scheduled so don't put it back in _pendingQueue.
           job.finalStatus = JobStatus.Fully_Scheduled
         }
         if (job.finalStatus != JobStatus.Not_Scheduled) {

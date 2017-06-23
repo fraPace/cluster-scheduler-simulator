@@ -287,8 +287,8 @@ class ClusterSimulator(val cellState: CellState,
 
   def measureQueues(): Unit = {
     schedulers.values.foreach(scheduler => {
-      pendingQueueStatus(scheduler.name) += scheduler.jobQueueSize
-      runningQueueStatus(scheduler.name) += scheduler.runningJobQueueSize
+      pendingQueueStatus(scheduler.name) += scheduler.pendingQueueSize
+      runningQueueStatus(scheduler.name) += scheduler.runningQueueSize
     })
   }
 
@@ -368,7 +368,7 @@ class ClusterSimulator(val cellState: CellState,
       "currentTime must be 0 at simulator run time."
     })
     schedulers.values.foreach(scheduler => {
-      assert(scheduler.jobQueueSize == 0, {
+      assert(scheduler.pendingQueueSize == 0, {
         "Schedulers are not allowed to have jobs in their queues when we run the simulator."
       })
     })

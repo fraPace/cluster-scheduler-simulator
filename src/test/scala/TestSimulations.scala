@@ -373,7 +373,7 @@ class SimulatorsTestSuite extends FunSuite {
     println("adding a job to scheduler.")
     scheduler.addJob(workload.getJobs.head)
     assert(scheduler.scheduling)
-    assert(scheduler.jobQueueSize == 0)
+    assert(scheduler.pendingQueueSize == 0)
     println("added job to scheduler.")
   }
 

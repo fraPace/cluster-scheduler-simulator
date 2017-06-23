@@ -46,7 +46,7 @@ import util.control.Breaks._
 class ZoeDynamicSimulatorDesc(schedulerDescs: Seq[SchedulerDesc],
                               runTime: Double,
                               val allocationMode: AllocationMode.Value,
-                              val policyMode: PolicyModes.Value)
+                              val policyMode: Modes.Value)
   extends ClusterSimulatorDesc(runTime) {
   override
   def newSimulator(constantThinkTime: Double,
@@ -108,7 +108,7 @@ class ZoeDynamicScheduler (name: String,
                           perTaskThinkTimes: Map[String, Double],
                           numMachinesToBlackList: Double = 0,
                           allocationMode: AllocationMode.Value,
-                          policyMode: PolicyModes.Value)
+                          policyMode: Modes.Value)
   extends ZoeScheduler(name,
     constantThinkTimes,
     perTaskThinkTimes,
@@ -427,7 +427,7 @@ class ZoeDynamicScheduler (name: String,
 //      forceWakeUpScheduler = false
     }
 
-    if (runningJobQueueSize > 0) {
+    if (runningQueueSize > 0) {
       simulator.afterDelay(reclaimResourcesPeriod) {
         checkResourceUtilization()
       }
@@ -462,9 +462,13 @@ class ZoeDynamicScheduler (name: String,
             val jobsClaimDeltasToKill: mutable.HashMap[Job, (Boolean, mutable.HashSet[ClaimDelta])] = mutable.HashMap[Job, (Boolean, mutable.HashSet[ClaimDelta])]()
             var memToFree: Long = claimDelta.memStillNeeded
 
-            simulator.cellState.claimDeltasPerMachine(machineID).reverseIterator.takeWhile(_ => memToFree > 0).foreach(cd => {
+            val sortedClaimDeltas = simulator.cellState.claimDeltasPerMachine(machineID).sortWith( (ob1, ob2) =>
+              Modes.compare(ob1.job.get, ob2.job.get , policyMode, simulator.currentTime) < 0)
+
+            sortedClaimDeltas.iterator.takeWhile(
+              cd => memToFree > 0 && Modes.compare(job, cd.job.get, policyMode, simulator.currentTime) >= 0
+            ).foreach(cd => {
               memToFree -= (if (cd != claimDelta //cd.job.get.id != job.id
-                && PolicyModes.comparePolicyPriority(job, cd.job.get, policyMode, simulator.currentTime) >= 0
                 && cd.taskType == TaskType.Elastic) {
                 val (c, e) = jobsClaimDeltasToKill.getOrElse(cd.job.get, (false, mutable.HashSet[ClaimDelta]()))
                 jobsClaimDeltasToKill(cd.job.get) = (c, e + cd)
@@ -472,14 +476,34 @@ class ZoeDynamicScheduler (name: String,
               }else 0)
             })
 
-            simulator.cellState.claimDeltasPerMachine(machineID).reverseIterator.takeWhile(_ => memToFree > 0).foreach( cd => {
+            sortedClaimDeltas.iterator.takeWhile(
+              cd => memToFree > 0 && Modes.compare(job, cd.job.get, policyMode, simulator.currentTime) >= 0
+            ).foreach( cd => {
               memToFree -= (if (cd.job.get.id != job.id
-                && PolicyModes.comparePolicyPriority(job, cd.job.get, policyMode, simulator.currentTime) >= 0
                 && cd.taskType == TaskType.Core) {
                 jobsClaimDeltasToKill(cd.job.get) = (true, mutable.HashSet[ClaimDelta]())
                 cd.currentMem
               }else 0)
             })
+
+//            simulator.cellState.claimDeltasPerMachine(machineID).reverseIterator.takeWhile(_ => memToFree > 0).foreach(cd => {
+//              memToFree -= (if (cd != claimDelta //cd.job.get.id != job.id
+//                && Modes.comparePolicyPriority(job, cd.job.get, policyMode, simulator.currentTime) >= 0
+//                && cd.taskType == TaskType.Elastic) {
+//                val (c, e) = jobsClaimDeltasToKill.getOrElse(cd.job.get, (false, mutable.HashSet[ClaimDelta]()))
+//                jobsClaimDeltasToKill(cd.job.get) = (c, e + cd)
+//                cd.currentMem
+//              }else 0)
+//            })
+//
+//            simulator.cellState.claimDeltasPerMachine(machineID).reverseIterator.takeWhile(_ => memToFree > 0).foreach( cd => {
+//              memToFree -= (if (cd.job.get.id != job.id
+//                && Modes.comparePolicyPriority(job, cd.job.get, policyMode, simulator.currentTime) >= 0
+//                && cd.taskType == TaskType.Core) {
+//                jobsClaimDeltasToKill(cd.job.get) = (true, mutable.HashSet[ClaimDelta]())
+//                cd.currentMem
+//              }else 0)
+//            })
 
             if(memToFree > 0){
               if (claimDelta.taskType == TaskType.Core){
@@ -674,7 +698,7 @@ class ZoeDynamicScheduler (name: String,
         simulator.cellState.claimDeltasPerMachine(machineID).size)
 
       // Sorted List of the jobs running on a machine. The sort is done per policy
-      val sortedJobsRunningOnMachine: ListBuffer[Job] = PolicyModes.getJobs(jobs, policyMode, simulator.currentTime)
+      val sortedJobsRunningOnMachine: ListBuffer[Job] = ListBuffer[Job]() //Modes.getJobs(jobs, policyMode, simulator.currentTime)
 
       var memoryFree: Long = simulator.cellState.memPerMachine
       var currentMemoryFree: Long = memoryFree

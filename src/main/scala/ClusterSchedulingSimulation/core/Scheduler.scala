@@ -279,8 +279,8 @@ abstract class Scheduler(val name: String,
   // loop.
   val candidatePoolCache: mutable.HashMap[Int, mutable.IndexedSeq[Int]] = mutable.HashMap[Int, mutable.IndexedSeq[Int]]()
   val randomNumberGenerator = new util.Random(Seed())
-  protected val pendingQueue: collection.mutable.Queue[Job] = collection.mutable.Queue[Job]()
-  protected val runningQueue: collection.mutable.Queue[Job] = collection.mutable.Queue[Job]()
+  protected var pendingQueue: collection.mutable.Queue[Job] = collection.mutable.Queue[Job]()
+  protected var runningQueue: collection.mutable.Queue[Job] = collection.mutable.Queue[Job]()
   // This gets set when this scheduler is added to a Simulator.
   // TODO(andyk): eliminate this pointer and make the scheduler
   //              more functional.
@@ -474,9 +474,9 @@ abstract class Scheduler(val name: String,
     }
   }
 
-  def jobQueueSize: Int = pendingQueue.size
+  def pendingQueueSize: Int = pendingQueue.size
 
-  def runningJobQueueSize: Int = runningQueue.size
+  def runningQueueSize: Int = runningQueue.size
 
   def isMultiPath: Boolean =
     constantThinkTimes.values.toSet.size > 1 ||

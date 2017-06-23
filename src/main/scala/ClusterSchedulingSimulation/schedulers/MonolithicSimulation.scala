@@ -205,7 +205,7 @@ class MonolithicScheduler(name: String,
           }
         } else {
           job.jobFinishedWorking = simulator.currentTime + job.taskDuration
-          // All tasks in job scheduled so don't put it back in pendingQueue.
+          // All tasks in job scheduled so don't put it back in _pendingQueue.
           job.finalStatus = JobStatus.Fully_Scheduled
         }
         if (job.finalStatus != JobStatus.Not_Scheduled) {

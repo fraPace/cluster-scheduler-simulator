@@ -660,7 +660,7 @@ class ExperimentRun(
         scheduler.numFailedTaskTransactions)
 
       schedulerStats.setIsMultiPath(scheduler.isMultiPath)
-      schedulerStats.setNumJobsLeftInQueue(scheduler.jobQueueSize)
+      schedulerStats.setNumJobsLeftInQueue(scheduler.pendingQueueSize)
       totalJobsLeftInQueue += schedulerStats.getNumJobsLeftInQueue
       totalAvgQueueSize += simulator.avgPendingQueueSize(scheduler.name)
       totalAvgRunningSize += simulator.avgRunningQueueSize(scheduler.name)

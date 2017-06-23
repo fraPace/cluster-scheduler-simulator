@@ -285,7 +285,7 @@ class MesosScheduler(name: String,
           }
         } else {
           job.jobFinishedWorking = simulator.currentTime + job.taskDuration
-          // All tasks in job scheduled so don't put it back in pendingQueue.
+          // All tasks in job scheduled so don't put it back in _pendingQueue.
           job.finalStatus = JobStatus.Fully_Scheduled
         }
         if (job.finalStatus != JobStatus.Not_Scheduled) {
@@ -303,7 +303,7 @@ class MesosScheduler(name: String,
       if (pendingQueue.isEmpty) {
         // If we have scheduled everything, notify the allocator that we
         // don't need resources offers until we request them again (which
-        // we will do when another job is added to our pendingQueue.
+        // we will do when another job is added to our _pendingQueue.
         // Do this before we reply to the offer since the allocator may make
         // its next round of offers shortly after we respond to this offer.
         mesosSimulator.logger.info(("After scheduling, %s's pending queue is " +
