@@ -790,6 +790,34 @@ object PolicyModes extends Enumeration with LazyLogging {
     }
   }
 
+  /**
+    *
+    * @param job
+    * @param job1
+    * @param policy
+    * @param currentTime
+    * @return It will return a value less than 0 if job has lower priority than job1, otherwise a value greater than zero
+    */
+  def comparePolicyPriority(job: Job, job1: Job, policy: PolicyModes.Value, currentTime: Double = 0): Int = {
+    policy match {
+      case PolicyModes.PriorityFifo => PolicyModes.comparePriority(job, job1)
+      case PolicyModes.LJF => PolicyModes.compareJobTime(job, job1)
+
+      case PolicyModes.Fifo | PolicyModes.hFifo | PolicyModes.eFifo => Math.negateExact(PolicyModes.compareArrivalTime(job, job1))
+      case PolicyModes.PSJF | PolicyModes.hPSJF | PolicyModes.ePSJF => Math.negateExact(PolicyModes.compareJobTime(job, job1))
+      case PolicyModes.HRRN | PolicyModes.hHRRN | PolicyModes.eHRRN => Math.negateExact(PolicyModes.compareResponseRatio(job, job1, currentTime))
+      case PolicyModes.SRPT | PolicyModes.hSRPT | PolicyModes.eSRPT => Math.negateExact(PolicyModes.compareJobRemainingTime(job, job1))
+      case PolicyModes.PSJF2D | PolicyModes.hPSJF2D | PolicyModes.ePSJF2D => Math.negateExact(PolicyModes.comparePSJF2D(job, job1))
+      case PolicyModes.SRPT2D1 | PolicyModes.hSRPT2D1 | PolicyModes.eSRPT2D1 => Math.negateExact(PolicyModes.compareSRPT2D1(job, job1))
+      case PolicyModes.SRPT2D2 | PolicyModes.hSRPT2D2 | PolicyModes.eSRPT2D2 => Math.negateExact(PolicyModes.compareSRPT2D2(job, job1))
+      case PolicyModes.HRRN2D | PolicyModes.hHRRN2D | PolicyModes.eHRRN2D => Math.negateExact(PolicyModes.compareHRRN2D(job, job1, currentTime))
+      case PolicyModes.PSJF3D | PolicyModes.hPSJF3D | PolicyModes.ePSJF3D => Math.negateExact(PolicyModes.comparePSJF3D(job, job1))
+      case PolicyModes.SRPT3D1 | PolicyModes.hSRPT3D1 | PolicyModes.eSRPT3D1 => Math.negateExact(PolicyModes.compareSRPT3D1(job, job1))
+      case PolicyModes.SRPT3D2 | PolicyModes.hSRPT3D2 | PolicyModes.eSRPT3D2 => Math.negateExact(PolicyModes.compareSRPT3D2(job, job1))
+      case PolicyModes.HRRN3D | PolicyModes.hHRRN3D | PolicyModes.eHRRN3D => Math.negateExact(PolicyModes.compareHRRN3D(job, job1, currentTime))
+    }
+  }
+
   def responseRatio(job: Job, currentTime: Double): Double = {
     job.responseRatio(currentTime) * job.error
   }

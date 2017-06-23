@@ -133,6 +133,16 @@ class ZoeDynamicScheduler (name: String,
 
   var forceWakeUpScheduler:Boolean = false
 
+  override def addJob(job: Job): Unit = {
+    val maxMemNeeded: Long = job.memoryUtilization.max
+    if(maxMemNeeded < job.memPerTask){
+      simulator.logger.info(loggerPrefix + job.loggerPrefix + " This job will use a lower memory (" + maxMemNeeded + ") than requested (" + job.memPerTask + ")")
+      job.memPerTask = maxMemNeeded
+    }
+
+    super.addJob(job)
+  }
+
   override def addRunningJob(job: Job): Unit = {
     super.addRunningJob(job)
     if (reclaimResourcesPeriod > 0 && previousCheckingResourceUtilizationTime == -1 && !job.disableResize) {
@@ -450,26 +460,25 @@ class ZoeDynamicScheduler (name: String,
               " This claimDelta is is OOMRisk and needs more memory (" + claimDelta.memStillNeeded + "), checking if we can find some space for it.")
 
             val jobsClaimDeltasToKill: mutable.HashMap[Job, (Boolean, mutable.HashSet[ClaimDelta])] = mutable.HashMap[Job, (Boolean, mutable.HashSet[ClaimDelta])]()
-            val jobPriority = PolicyModes.getPriority(job, policyMode, simulator.currentTime)
             var memToFree: Long = claimDelta.memStillNeeded
 
-            simulator.cellState.claimDeltasPerMachine(machineID).reverseIterator.takeWhile(_ => memToFree > 0).foreach( cd => {
-              if (cd.job.get.id != job.id
-//                && PolicyModes.getPriority(cd.job.get, policyMode, simulator.currentTime) >= jobPriority
+            simulator.cellState.claimDeltasPerMachine(machineID).reverseIterator.takeWhile(_ => memToFree > 0).foreach(cd => {
+              memToFree -= (if (cd != claimDelta //cd.job.get.id != job.id
+                && PolicyModes.comparePolicyPriority(job, cd.job.get, policyMode, simulator.currentTime) >= 0
                 && cd.taskType == TaskType.Elastic) {
-                memToFree -= cd.currentMem
                 val (c, e) = jobsClaimDeltasToKill.getOrElse(cd.job.get, (false, mutable.HashSet[ClaimDelta]()))
                 jobsClaimDeltasToKill(cd.job.get) = (c, e + cd)
-              }
+                cd.currentMem
+              }else 0)
             })
 
             simulator.cellState.claimDeltasPerMachine(machineID).reverseIterator.takeWhile(_ => memToFree > 0).foreach( cd => {
-              if (cd.job.get.id != job.id
-//                && PolicyModes.getPriority(cd.job.get, policyMode, simulator.currentTime) >= jobPriority
+              memToFree -= (if (cd.job.get.id != job.id
+                && PolicyModes.comparePolicyPriority(job, cd.job.get, policyMode, simulator.currentTime) >= 0
                 && cd.taskType == TaskType.Core) {
-                memToFree -= cd.currentMem
                 jobsClaimDeltasToKill(cd.job.get) = (true, mutable.HashSet[ClaimDelta]())
-              }
+                cd.currentMem
+              }else 0)
             })
 
             if(memToFree > 0){
