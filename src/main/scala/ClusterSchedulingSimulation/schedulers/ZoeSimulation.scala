@@ -43,7 +43,7 @@ import scala.collection.mutable
 class ZoeSimulatorDesc(schedulerDescs: Seq[SchedulerDesc],
                        runTime: Double,
                        val allocationMode: AllocationMode.Value,
-                       val policyMode: Modes.Value)
+                       val policyMode: Policy.Modes.Value)
   extends ClusterSimulatorDesc(runTime) {
   override
   def newSimulator(constantThinkTime: Double,
@@ -105,7 +105,7 @@ class ZoeScheduler(name: String,
                    perTaskThinkTimes: Map[String, Double],
                    numMachinesToBlackList: Double = 0,
                    allocationMode: AllocationMode.Value,
-                   policyMode: Modes.Value)
+                   policyMode: Policy.Modes.Value)
   extends Scheduler(name,
     constantThinkTimes,
     perTaskThinkTimes,
@@ -116,6 +116,7 @@ class ZoeScheduler(name: String,
 
   lazy val elasticPrefix = "[Elastic]"
 
+  var policy: Policy = _
   var _pendingQueue: mutable.TreeSet[Job] = _
   var _runningQueue: mutable.TreeSet[Job] = _
 
@@ -171,10 +172,10 @@ class ZoeScheduler(name: String,
     super.addJob(job)
 
     if(_pendingQueue == null){
-      _pendingQueue = mutable.TreeSet[Job]()(Policy(policyMode, simulator))
-      _runningQueue = mutable.TreeSet[Job]()(Policy(policyMode, simulator))
+      policy = Policy(policyMode, simulator)
+      _pendingQueue = mutable.TreeSet[Job]()(policy)
+      _runningQueue = mutable.TreeSet[Job]()(policy)
     }
-
 
     addPendingJob(job)
     //    simulator.logger.warn("%f - Added a new Job (%s) in the queue. Num Tasks: %d (%d/%d) | Cpus: %f | Mem: %f | Job Runtime: %f"
@@ -359,9 +360,9 @@ class ZoeScheduler(name: String,
     }
 
 
-    if (Modes.myPolicies.contains(policyMode)) {
+    if (policy.isHybrid) {
       flexibleAlgorithm()
-    } else if (Modes.elasticPolicies.contains(policyMode)) {
+    } else if (policy.isElastic) {
       malleableAlgorithm()
     } else{
       rigidAlgorithm()
@@ -462,13 +463,8 @@ class ZoeScheduler(name: String,
       simulator.logger.info(loggerPrefix + " The global cell state is (" + simulator.cellState.availableCpus + " CPUs, " +
         simulator.cellState.availableMem + " mem with " + simulator.cellState.claimDeltas.size + " claimDeltas)")
 
-//      val jobsToAttemptScheduling: ListBuffer[Job] = Modes.getJobs(_pendingQueue, policyMode, simulator.currentTime)
       val jobsToAttemptScheduling: ListBuffer[Job] =
-        if (policyMode == Modes.Fifo || policyMode == Modes.eFifo) ListBuffer[Job](_pendingQueue.head) else ListBuffer[Job]() ++ _pendingQueue
-      if (policyMode == Modes.Fifo || policyMode == Modes.eFifo)
-        assert(jobsToAttemptScheduling.length == 1, {
-          "For Fifo and eFifo policy the jobsToAttemptScheduling length must be 1 (" + jobsToAttemptScheduling.length + ")"
-        })
+        if (policy.mode == Policy.Modes.Fifo || policy.mode == Policy.Modes.eFifo) ListBuffer[Job](_pendingQueue.head) else ListBuffer[Job]() ++ _pendingQueue
 
       if(enableCellStateSnapshot){
         syncCellState()
@@ -519,129 +515,138 @@ class ZoeScheduler(name: String,
 
 }
 
-class Policy(mode:Modes.Value, simulator: ClusterSimulator) extends Ordering[Job] with LazyLogging{
-
+class Policy(val mode:Policy.Modes.Value, simulator: ClusterSimulator) extends Ordering[Job] with LazyLogging{
   assert(simulator != null)
 
+  def isRigid: Boolean = Policy.Modes.rigidPolicies.contains(mode)
+  def isElastic: Boolean = Policy.Modes.elasticPolicies.contains(mode)
+  def isHybrid: Boolean = Policy.Modes.hybridPolicies.contains(mode)
+
+  /**
+    * @param x the first object to be compared.
+    * @param y the second object to be compared.
+    * @return It will return a value less than 0 if x has higher priority than y, otherwise a value greater than zero
+    */
   override def compare(x: Job, y: Job): Int = {
-    Modes.compare(x, y, mode, simulator.currentTime)
+    Policy.Modes.compare(x, y, mode, simulator.currentTime)
   }
 }
 
 object Policy {
 
+  object Modes extends Enumeration {
+    val
+    Fifo, PSJF, SRPT, HRRN,
+    PSJF2D, SRPT2D1, SRPT2D2, HRRN2D,
+    PSJF3D, SRPT3D1, SRPT3D2, HRRN3D,
+
+    eFifo, ePSJF, eSRPT, eHRRN,
+    ePSJF2D, eSRPT2D1, eSRPT2D2, eHRRN2D,
+    ePSJF3D, eSRPT3D1, eSRPT3D2, eHRRN3D,
+
+    hFifo, hPSJF, hSRPT, hHRRN,
+    hPSJF2D, hSRPT2D1, hSRPT2D2, hHRRN2D,
+    hPSJF3D, hSRPT3D1, hSRPT3D2, hHRRN3D,
+
+    PriorityFifo, LJF = Value
+
+    val hybridPolicies: List[Modes.Value] = List[Modes.Value](
+      Modes.hFifo, Modes.hPSJF, Modes.hSRPT, Modes.hHRRN,
+      Modes.hPSJF2D, Modes.hSRPT2D1, Modes.hSRPT2D2, Modes.hHRRN2D,
+      Modes.hPSJF3D, Modes.hSRPT3D1, Modes.hSRPT3D2, Modes.hHRRN3D
+    )
+
+    val elasticPolicies: List[Modes.Value] = List[Modes.Value](
+      Modes.eFifo, Modes.ePSJF, Modes.eSRPT, Modes.eHRRN,
+      Modes.ePSJF2D, Modes.eSRPT2D1, Modes.eSRPT2D2, Modes.eHRRN2D,
+      Modes.ePSJF3D, Modes.eSRPT3D1, Modes.eSRPT3D2, Modes.eHRRN3D
+    )
+
+    val rigidPolicies: List[Modes.Value] = List[Modes.Value](
+      Modes.Fifo, Modes.PSJF, Modes.SRPT, Modes.HRRN,
+      Modes.PSJF2D, Modes.SRPT2D1, Modes.SRPT2D2, Modes.HRRN2D,
+      Modes.PSJF3D, Modes.SRPT3D1, Modes.SRPT3D2, Modes.HRRN3D
+    )
+
+    val noPriorityPolicies: List[Modes.Value] = List[Modes.Value](
+      Modes.hFifo, Modes.eFifo, Modes.Fifo
+    )
+
+    def jobPriority(job: Job): Double = job.priority.toDouble
+
+    def arrivalTime(job: Job): Double = job.submitted * job.sizeAdjustment
+
+    def jobDuration(job: Job): Double = job.jobDuration * job.sizeAdjustment * job.error
+
+    def remainingTime(job: Job): Double = job.remainingTime * job.sizeAdjustment * job.error
+
+    def responseRatio(job: Job, currentTime: Double): Double =
+      job.responseRatio(currentTime) * job.sizeAdjustment * job.error
+
+
+    def pSJF2D(job: Job): Double = jobDuration(job) * job.numTasks
+
+    def sRPT2D1(job: Job): Double = remainingTime(job) * job.numTasks
+
+    def sRPT2D2(job: Job): Double = remainingTime(job) * (job.elasticTasksUnscheduled + job.tasksUnscheduled)
+
+    def hRRN2D(job: Job, currentTime: Double): Double = responseRatio(job, currentTime) * job.numTasks
+
+
+    def pSJF3D(job: Job): Double = pSJF2D(job) * job.memPerTask * job.cpusPerTask.toDouble
+
+    def sRPT3D1(job: Job): Double = sRPT3D1(job) * job.memPerTask * job.cpusPerTask.toDouble
+
+    def sRPT3D2(job: Job): Double = sRPT2D2(job) * job.memPerTask * job.cpusPerTask.toDouble
+
+    def hRRN3D(job: Job, currentTime: Double): Double = hRRN2D(job, currentTime) * job.memPerTask * job.cpusPerTask.toDouble
+
+    /**
+      * @param x the first object to be compared.
+      * @param y the second object to be compared.
+      * @param policy the policy used
+      * @param currentTime the simulator current time
+      * @return It will return a value less than 0 if x has higher priority than y, otherwise a value greater than zero
+      */
+    def compare(x: Job, y: Job, policy: Modes.Value, currentTime: Double = 0): Int = {
+      def _compare(o1: Job, o2: Job, f: (Job) => Double): Int = {
+        if (o1 == null && o2 == null)
+          return 0
+        if (o1 == null)
+          return 1
+        if (o2 == null)
+          return -1
+
+        val ret = f(o1).compareTo(f(o2))
+        if(ret == 0)
+          o1.id.compareTo(o2.id)
+        else
+          ret
+      }
+
+      policy match {
+        case Modes.Fifo | Modes.hFifo | Modes.eFifo => _compare(x, y, arrivalTime)
+        case Modes.PriorityFifo => _compare(x, y, jobPriority)
+
+        case Modes.PSJF | Modes.hPSJF | Modes.ePSJF => _compare(x, y, jobDuration)
+        case Modes.LJF => Math.negateExact(_compare(x, y, jobDuration))
+        case Modes.HRRN | Modes.hHRRN | Modes.eHRRN => _compare(x, y, responseRatio(_, currentTime))
+        case Modes.SRPT | Modes.hSRPT | Modes.eSRPT => _compare(x, y, remainingTime)
+
+        case Modes.PSJF2D | Modes.hPSJF2D | Modes.ePSJF2D => _compare(x, y, pSJF2D)
+        case Modes.SRPT2D1 | Modes.hSRPT2D1 | Modes.eSRPT2D1 => _compare(x, y, sRPT2D1)
+        case Modes.SRPT2D2 | Modes.hSRPT2D2 | Modes.eSRPT2D2 => _compare(x, y, sRPT2D2)
+        case Modes.HRRN2D | Modes.hHRRN2D | Modes.eHRRN2D => _compare(x, y, hRRN2D(_, currentTime))
+
+        case Modes.PSJF3D | Modes.hPSJF3D | Modes.ePSJF3D => _compare(x, y, pSJF3D)
+        case Modes.SRPT3D1 | Modes.hSRPT3D1 | Modes.eSRPT3D1 => _compare(x, y, sRPT3D1)
+        case Modes.SRPT3D2 | Modes.hSRPT3D2 | Modes.eSRPT3D2 => _compare(x, y, sRPT3D2)
+        case Modes.HRRN3D | Modes.hHRRN3D | Modes.eHRRN3D => _compare(x, y, hRRN3D(_, currentTime))
+      }
+    }
+  }
+
   def apply(mode: Modes.Value, simulator: ClusterSimulator): Policy = new Policy(mode, simulator)
 }
 
-object Modes extends Enumeration {
-  val
-  Fifo, PSJF, SRPT, HRRN,
-  PSJF2D, SRPT2D1, SRPT2D2, HRRN2D,
-  PSJF3D, SRPT3D1, SRPT3D2, HRRN3D,
 
-  eFifo, ePSJF, eSRPT, eHRRN,
-  ePSJF2D, eSRPT2D1, eSRPT2D2, eHRRN2D,
-  ePSJF3D, eSRPT3D1, eSRPT3D2, eHRRN3D,
-
-  hFifo, hPSJF, hSRPT, hHRRN,
-  hPSJF2D, hSRPT2D1, hSRPT2D2, hHRRN2D,
-  hPSJF3D, hSRPT3D1, hSRPT3D2, hHRRN3D,
-
-  PriorityFifo, LJF = Value
-
-  val myPolicies: List[Modes.Value] = List[Modes.Value](
-    Modes.hFifo, Modes.hPSJF, Modes.hSRPT, Modes.hHRRN,
-    Modes.hPSJF2D, Modes.hSRPT2D1, Modes.hSRPT2D2, Modes.hHRRN2D,
-    Modes.hPSJF3D, Modes.hSRPT3D1, Modes.hSRPT3D2, Modes.hHRRN3D
-  )
-
-  val elasticPolicies: List[Modes.Value] = List[Modes.Value](
-    Modes.eFifo, Modes.ePSJF, Modes.eSRPT, Modes.eHRRN,
-    Modes.ePSJF2D, Modes.eSRPT2D1, Modes.eSRPT2D2, Modes.eHRRN2D,
-    Modes.ePSJF3D, Modes.eSRPT3D1, Modes.eSRPT3D2, Modes.eHRRN3D
-  )
-
-  val rigidPolicies: List[Modes.Value] = List[Modes.Value](
-    Modes.Fifo, Modes.PSJF, Modes.SRPT, Modes.HRRN,
-    Modes.PSJF2D, Modes.SRPT2D1, Modes.SRPT2D2, Modes.HRRN2D,
-    Modes.PSJF3D, Modes.SRPT3D1, Modes.SRPT3D2, Modes.HRRN3D
-  )
-
-  val noPriorityPolicies: List[Modes.Value] = List[Modes.Value](
-    Modes.hFifo, Modes.eFifo, Modes.Fifo
-  )
-
-  def jobPriority(job: Job): Double = job.priority.toDouble
-
-  def arrivalTime(job: Job): Double = job.submitted * job.sizeAdjustment
-
-  def jobDuration(job: Job): Double = job.jobDuration * job.sizeAdjustment * job.error
-
-  def remainingTime(job: Job): Double = job.remainingTime * job.sizeAdjustment * job.error
-
-  def responseRatio(job: Job, currentTime: Double): Double =
-    job.responseRatio(currentTime) * job.sizeAdjustment * job.error
-
-
-  def pSJF2D(job: Job): Double = jobDuration(job) * job.numTasks
-
-  def sRPT2D1(job: Job): Double = remainingTime(job) * job.numTasks
-
-  def sRPT2D2(job: Job): Double = remainingTime(job) * (job.elasticTasksUnscheduled + job.tasksUnscheduled)
-
-  def hRRN2D(job: Job, currentTime: Double): Double = responseRatio(job, currentTime) * job.numTasks
-
-
-  def pSJF3D(job: Job): Double = pSJF2D(job) * job.memPerTask * job.cpusPerTask.toDouble
-
-  def sRPT3D1(job: Job): Double = sRPT3D1(job) * job.memPerTask * job.cpusPerTask.toDouble
-
-  def sRPT3D2(job: Job): Double = sRPT2D2(job) * job.memPerTask * job.cpusPerTask.toDouble
-
-  def hRRN3D(job: Job, currentTime: Double): Double = hRRN2D(job, currentTime) * job.memPerTask * job.cpusPerTask.toDouble
-
-  /**
-    *
-    * @param job
-    * @param job1
-    * @param policy
-    * @param currentTime
-    * @return It will return a value less than 0 if job has lower priority than job1, otherwise a value greater than zero
-    */
-  def compare(job: Job, job1: Job, policy: Modes.Value, currentTime: Double = 0): Int = {
-    def _compare(o1: Job, o2: Job, f: (Job) => Double): Int = {
-      if (o1 == null && o2 == null)
-        return 0
-      if (o1 == null)
-        return 1
-      if (o2 == null)
-        return -1
-
-      val ret = f(o1).compareTo(f(o2))
-      if(ret == 0)
-        o1.id.compareTo(o2.id)
-      else
-        ret
-    }
-
-    policy match {
-      case Modes.Fifo | Modes.hFifo | Modes.eFifo => _compare(job, job1, arrivalTime)
-      case Modes.PriorityFifo => _compare(job, job1, jobPriority)
-
-      case Modes.PSJF | Modes.hPSJF | Modes.ePSJF => _compare(job, job1, jobDuration)
-      case Modes.LJF => Math.negateExact(_compare(job, job1, jobDuration))
-      case Modes.HRRN | Modes.hHRRN | Modes.eHRRN => _compare(job, job1, responseRatio(_, currentTime))
-      case Modes.SRPT | Modes.hSRPT | Modes.eSRPT => _compare(job, job1, remainingTime)
-
-      case Modes.PSJF2D | Modes.hPSJF2D | Modes.ePSJF2D => _compare(job, job1, pSJF2D)
-      case Modes.SRPT2D1 | Modes.hSRPT2D1 | Modes.eSRPT2D1 => _compare(job, job1, sRPT2D1)
-      case Modes.SRPT2D2 | Modes.hSRPT2D2 | Modes.eSRPT2D2 => _compare(job, job1, sRPT2D2)
-      case Modes.HRRN2D | Modes.hHRRN2D | Modes.eHRRN2D => _compare(job, job1, hRRN2D(_, currentTime))
-
-      case Modes.PSJF3D | Modes.hPSJF3D | Modes.ePSJF3D => _compare(job, job1, pSJF3D)
-      case Modes.SRPT3D1 | Modes.hSRPT3D1 | Modes.eSRPT3D1 => _compare(job, job1, sRPT3D1)
-      case Modes.SRPT3D2 | Modes.hSRPT3D2 | Modes.eSRPT3D2 => _compare(job, job1, sRPT3D2)
-      case Modes.HRRN3D | Modes.hHRRN3D | Modes.eHRRN3D => _compare(job, job1, hRRN3D(_, currentTime))
-    }
-  }
-}

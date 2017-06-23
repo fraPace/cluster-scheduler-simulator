@@ -78,7 +78,7 @@ object Simulation extends LazyLogging {
     val runOmega = false
     val runZoe = true
     val runZoePreemption = false
-    val runZoeDynamic = false
+    val runZoeDynamic = true
 
     val globalRunTime = 86400.0 * 90 //86400.0 // 1 Day
     val threadSleep = 5
@@ -149,48 +149,48 @@ object Simulation extends LazyLogging {
     val sweepLambda = true
 
     val allocationModes = List[AllocationMode.Value](AllocationMode.AllCore) //, AllocationModes.Incremental)
-    val policyModes = List[Modes.Value](
-      //      Modes.PriorityFifo,
-      //      Modes.LJF,
+    val policyModes = List[Policy.Modes.Value](
+      //      Policy.Modes.PriorityFifo,
+      //      Policy.Modes.LJF,
 
-//            Modes.Fifo,
-//            Modes.eFifo,
-      Modes.hFifo//,
-//            Modes.PSJF,
-      //      Modes.ePSJF,
-//            Modes.hPSJF//,
-      //      Modes.SRPT,
-      //      Modes.eSRPT,
-      //      Modes.hSRPT//,
-      //      Modes.HRRN,
-      //      Modes.eHRRN,
-      //      Modes.hHRRN//,
+//            Policy.Modes.Fifo,
+//            Policy.Modes.eFifo,
+      Policy.Modes.hFifo//,
+//            Policy.Modes.PSJF,
+      //      Policy.Modes.ePSJF,
+//            Policy.Modes.hPSJF//,
+      //      Policy.Modes.SRPT,
+      //      Policy.Modes.eSRPT,
+      //      Policy.Modes.hSRPT//,
+      //      Policy.Modes.HRRN,
+      //      Policy.Modes.eHRRN,
+      //      Policy.Modes.hHRRN//,
       //
-      //      Modes.PSJF2D,
-      //      Modes.ePSJF2D,
-      //      Modes.hPSJF2D,
-      //      Modes.SRPT2D1,
-      //      Modes.eSRPT2D1,
-      //      Modes.hSRPT2D1,
-      //      Modes.SRPT2D2,
-      //      Modes.eSRPT2D2,
-      //      Modes.hSRPT2D2,
-      //      Modes.HRRN2D,
-      //      Modes.eHRRN2D,
-      //      Modes.hHRRN2D//,
+      //      Policy.Modes.PSJF2D,
+      //      Policy.Modes.ePSJF2D,
+      //      Policy.Modes.hPSJF2D,
+      //      Policy.Modes.SRPT2D1,
+      //      Policy.Modes.eSRPT2D1,
+      //      Policy.Modes.hSRPT2D1,
+      //      Policy.Modes.SRPT2D2,
+      //      Policy.Modes.eSRPT2D2,
+      //      Policy.Modes.hSRPT2D2,
+      //      Policy.Modes.HRRN2D,
+      //      Policy.Modes.eHRRN2D,
+      //      Policy.Modes.hHRRN2D//,
       //
-      //      Modes.PSJF3D,
-      //      Modes.ePSJF3D,
-      //      Modes.hPSJF3D,
-      //      Modes.SRPT3D1,
-      //      Modes.eSRPT3D1,
-      //      Modes.hSRPT3D1,
-      //      Modes.SRPT3D2,
-      //      Modes.eSRPT3D2,
-      //      Modes.hSRPT3D2//,
-      //      Modes.HRRN3D,
-      //      Modes.eHRRN3D,
-      //      Modes.hHRRN3D
+      //      Policy.Modes.PSJF3D,
+      //      Policy.Modes.ePSJF3D,
+      //      Policy.Modes.hPSJF3D,
+      //      Policy.Modes.SRPT3D1,
+      //      Policy.Modes.eSRPT3D1,
+      //      Policy.Modes.hSRPT3D1,
+      //      Policy.Modes.SRPT3D2,
+      //      Policy.Modes.eSRPT3D2,
+      //      Policy.Modes.hSRPT3D2//,
+      //      Policy.Modes.HRRN3D,
+      //      Policy.Modes.eHRRN3D,
+      //      Policy.Modes.hHRRN3D
     )
 
     val formatter = new java.text.SimpleDateFormat("yyyy-MM-dd-HH-mm-ss")
