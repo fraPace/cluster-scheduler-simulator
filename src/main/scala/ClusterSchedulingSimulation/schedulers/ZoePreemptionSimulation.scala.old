@@ -44,7 +44,7 @@ import scala.collection.{Iterator, mutable}
 class ZoePreemptionSimulatorDesc(schedulerDescs: Seq[SchedulerDesc],
                                  runTime: Double,
                                  val allocationMode: AllocationMode.Value,
-                                 val policyMode: PolicyModes.Value)
+                                 val policyMode: Modes.Value)
   extends ClusterSimulatorDesc(runTime){
   override
   def newSimulator(constantThinkTime: Double,
@@ -109,7 +109,7 @@ class ZoePreemptionScheduler(name: String,
                              perTaskThinkTimes: Map[String, Double],
                              numMachinesToBlackList: Double = 0,
                              allocationMode: AllocationMode.Value,
-                             policyMode: PolicyModes.Value)
+                             policyMode: Modes.Value)
   extends Scheduler(name,
     constantThinkTimes,
     perTaskThinkTimes,
@@ -150,7 +150,7 @@ class ZoePreemptionScheduler(name: String,
 //  var previousJob: Job = _
 
   def getJobs(queue: ListBuffer[Job], currentTime:Double): ListBuffer[Job] ={
-    val jobs = PolicyModes.getJobsWithSamePriority(queue, policyMode, currentTime)
+    val jobs = Modes.getJobsWithSamePriority(queue, policyMode, currentTime)
     jobs.foreach(job => {
       removePendingJob(job)
     })
@@ -260,7 +260,7 @@ class ZoePreemptionScheduler(name: String,
     //    moldableQueueIterator = pendingQueueAsList.iterator
 
     //    interruptElasticScheduling = true
-    //    if(policyMode == PolicyModes.Fifo || policyMode == PolicyModes.PriorityFifo)
+    //    if(policyMode == Modes.Fifo || policyMode == Modes.PriorityFifo)
     //      numJobsSeen = 0
 
     scheduleNextJob()
@@ -502,11 +502,11 @@ class ZoePreemptionScheduler(name: String,
         scheduling = true
 
         var jobsToAttemptScheduling: ListBuffer[Job] = getJobs(pendingQueueAsList, simulator.currentTime)
-        if(policyMode == PolicyModes.Fifo || policyMode == PolicyModes.hFifo)
+        if(policyMode == Modes.Fifo || policyMode == Modes.hFifo)
           assert(jobsToAttemptScheduling.length == 1, {
             "For Fifo like policy the jobsToAttemptScheduling length must be 1 (%d)".format(jobsToAttemptScheduling.length)
           })
-        if(PolicyModes.myPolicies.contains(policyMode)){
+        if(Modes.myPolicies.contains(policyMode)){
           if (jobsToAttemptScheduling.size > 1)
             jobsToAttemptScheduling = jobsToAttemptScheduling.sortWith(_.numTasks > _.numTasks)
         }
@@ -562,10 +562,10 @@ class ZoePreemptionScheduler(name: String,
 
             job.numSchedulingAttempts += 1
 
-            if(PolicyModes.myPolicies.contains(policyMode)){
+            if(Modes.myPolicies.contains(policyMode)){
               if(!stop){
                 var jobsThatCanBePreempted: ListBuffer[JobPreemption] = new ListBuffer[JobPreemption]()
-                for(job1: Job <- PolicyModes.getJobsWithLowerPriority(runningQueueAsList, policyMode, job, simulator.currentTime).reverse){
+                for(job1: Job <- Modes.getJobsWithLowerPriority(runningQueueAsList, policyMode, job, simulator.currentTime).reverse){
                   if(job1.finalStatus != JobStatus.Completed /*&& job1.scheduledElasticTasks > 0*/){
                     var inserted: Boolean = false
                     for(jobToPreempt: JobPreemption <- jobsToPreempt if !inserted){
