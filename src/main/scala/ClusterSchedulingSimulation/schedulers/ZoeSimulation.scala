@@ -116,6 +116,8 @@ class ZoeScheduler(name: String,
 
   lazy val elasticPrefix = "[Elastic]"
 
+  // We have to use to ugly hack because the pointer to the simulator is set after the creation of this class
+  var initialization: Boolean = false
   var policy: Policy = _
   var _pendingQueue: mutable.TreeSet[Job] = _
   var _runningQueue: mutable.TreeSet[Job] = _
@@ -171,10 +173,15 @@ class ZoeScheduler(name: String,
     simulator.logger.info(loggerPrefix + " Enqueued job " + job.id + " of workload type " + job.workloadName + ".")
     super.addJob(job)
 
-    if(_pendingQueue == null){
+    if(!initialization){
       policy = Policy(policyMode, simulator)
       _pendingQueue = mutable.TreeSet[Job]()(policy)
       _runningQueue = mutable.TreeSet[Job]()(policy)
+
+//      simulator.extraMonitoringActions.append(
+//        () => _runningQueue.foreach(_.updateProgress(simulator.currentTime))
+//      )
+      initialization = true
     }
 
     addPendingJob(job)
@@ -201,7 +208,7 @@ class ZoeScheduler(name: String,
       removeAllUpcomingEventsForJob(job)
     }
 
-    job.calculateProgress(currTime = simulator.currentTime, newTasksAllocated = newElasticsAllocated, tasksRemoved = elasticsRemoved)
+    job.updateProgress(currTime = simulator.currentTime, newTasksAllocated = newElasticsAllocated, tasksRemoved = elasticsRemoved)
     val jobDuration: Double = job.remainingTime
 
     simulator.logger.info(loggerPrefix + (if(newElasticsAllocated != 0 || elasticsRemoved.nonEmpty) elasticPrefix else "") +

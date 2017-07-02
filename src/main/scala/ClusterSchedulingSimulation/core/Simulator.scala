@@ -342,6 +342,8 @@ class ClusterSimulator(val cellState: CellState,
     memUtilizationWasted += 0
   }
 
+  val extraMonitoringActions: ListBuffer[Action] = ListBuffer[Action]()
+
   def monitoring(): Unit = {
     if (monitorAllocation)
       measureAllocation()
@@ -350,6 +352,7 @@ class ClusterSimulator(val cellState: CellState,
     if (monitorUtilization)
       measureUtilization()
 
+    extraMonitoringActions.foreach(_())
 
     // Only schedule a monitoring event if the simulator has
     // more (non-monitoring) events to play. Else this will cause
