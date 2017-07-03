@@ -335,7 +335,7 @@ class CellState(val numMachines: Int,
       val realDelay = if (delay == -1) appliedDelta.duration else delay
       if (realDelay > maxDelay) maxDelay = realDelay
       simulator.afterDelay(realDelay, eventType = EventType.Remove, itemId = job.id) {
-        simulator.logger.info(appliedDelta.scheduler.loggerPrefix + jobPrefix + " A task finished after " + realDelay + "s. Freeing " +
+        simulator.logger.info(appliedDelta.scheduler.loggerPrefix + jobPrefix + " A task finished after " + (simulator.currentTime - appliedDelta.creationTime) + "s. Freeing " +
           appliedDelta.currentCpus + " CPUs, " + appliedDelta.currentMem + " mem. Available: " + availableCpus + " CPUs, " + availableMem + " mem.")
         appliedDelta.unApply(simulator.cellState)
       }
