@@ -169,31 +169,31 @@ object Workloads {
 
 //  val fakeWorkloadGenerator = new FakeZoeWorkloadGenerator("Batch")
   //  val fakeWorkloadGenerator = new FakePreemptiveZoeWorkloadGenerator("Batch")
-//  val fakeWorkloadGenerator = new FakeZoeDynamicWorkloadGenerator("Batch")
-//
-//  val eurecomCellTraceAllWorkloadPrefillDesc =
-//    WorkloadDesc(
-//      cell = "Eurecom",
-//      assignmentPolicy = "CMB_PBB",
-//      workloadGenerators =
-//        fakeWorkloadGenerator ::
-//          Nil,
-//      cellStateDesc = new CellStateDesc(1,
-//        globalCpusPerMachine,
-//        128 * Constant.GiB)
-//    )
+  val fakeWorkloadGenerator = new FakeZoeDynamicWorkloadGenerator("Batch")
 
   val eurecomCellTraceAllWorkloadPrefillDesc =
     WorkloadDesc(
       cell = "Eurecom",
       assignmentPolicy = "CMB_PBB",
       workloadGenerators =
-        workloadGeneratorTraceAllBatch ::
-          workloadGeneratorTraceAllService ::
-          //          workloadGeneratorTraceAllInteractive ::
+        fakeWorkloadGenerator ::
           Nil,
-      cellStateDesc = eurecomCellStateDesc
+      cellStateDesc = new CellStateDesc(1,
+        globalCpusPerMachine,
+        128 * Constant.GiB)
     )
+
+//  val eurecomCellTraceAllWorkloadPrefillDesc =
+//    WorkloadDesc(
+//      cell = "Eurecom",
+//      assignmentPolicy = "CMB_PBB",
+//      workloadGenerators =
+//        workloadGeneratorTraceAllBatch ::
+//          workloadGeneratorTraceAllService ::
+//          //          workloadGeneratorTraceAllInteractive ::
+//          Nil,
+//      cellStateDesc = eurecomCellStateDesc
+//    )
 
   //  val eurecomCellTraceAllWorkloadPrefillDesc =
   //    WorkloadDesc(

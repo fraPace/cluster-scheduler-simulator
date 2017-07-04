@@ -126,8 +126,8 @@ case class Job(id: Long,
   // This variable is used to calculate the relative (non absolute) progression
   private[this] var _lastProgressTimeCalculation: Double = 0
 
-  private[this] var _cpuUtilization: Array[Int] = Array[Int]()
-  private[this] var _memoryUtilization: Array[Long] = Array[Long]()
+  private[this] var _cpuUtilization: Array[Float] = Array[Float]()
+  private[this] var _memoryUtilization: Array[Float] = Array[Float]()
 
   private[this] var _numJobCrashes: Long = 0
 
@@ -159,45 +159,64 @@ case class Job(id: Long,
   override def hashCode(): Int = this.id.hashCode()
 
   var cpuUtilizationIndexAdjustment: Float = 0
-  def cpuUtilization: Array[Int] = _cpuUtilization
-  def cpuUtilization_=(value: Array[Int]): Unit = {
+  def cpuUtilization: Array[Float] = _cpuUtilization
+  def cpuUtilization_=(value: Array[Float]): Unit = {
     if(value.nonEmpty){
       value.foreach(v => assert(v <= cpusPerTask, {
         "CPU Utilization (" + v + ") is higher than allocated (" + cpusPerTask + ")."
       }))
+      assert(value.length == jobDuration, {
+        "The number of points must be equal to the job duration."
+      })
       _cpuUtilization = value
-      // We use this formula be able to divide the utilization in buckets and to prevent errors when accessing the last element of the array
+      // We use this formula be able to divide the utilization in buckets
       // By also considering to have fewer points than the total size of the array
       // Using module is not a good option because the polling times (monitoringTime and others) might be different
-      cpuUtilizationIndexAdjustment = Math.ceil(jobDurationCoreOnly / (_cpuUtilization.length - 1).toDouble).toFloat
+      cpuUtilizationIndexAdjustment = Math.ceil(jobDurationCoreOnly / _cpuUtilization.length.toDouble).toFloat
     }
   }
 
   var memoryUtilizationIndexAdjustment: Float = 0
-  def memoryUtilization: Array[Long] = _memoryUtilization
-  def memoryUtilization_=(value: Array[Long]): Unit = {
+  def memoryUtilization: Array[Float] = _memoryUtilization
+  def memoryUtilization_=(value: Array[Float]): Unit = {
     if(value.nonEmpty){
       value.foreach(v => assert(v <= memPerTask, {
         "Memory Utilization (" + v + ") is higher than allocated (" + memPerTask + ")."
       }))
       _memoryUtilization = value
-      // We use this formula be able to divide the utilization in buckets and to prevent errors when accessing the last element of the array
+      // We use this formula be able to divide the utilization in buckets
       // By also considering to have fewer points than the total size of the array
       // Using module is not a good option because the polling times (monitoringTime and others) might be different
-      memoryUtilizationIndexAdjustment = Math.ceil(jobDurationCoreOnly / (_memoryUtilization.length - 1).toDouble).toFloat
+      memoryUtilizationIndexAdjustment = (jobDurationCoreOnly / _memoryUtilization.length.toDouble).toFloat
     }
   }
 
   def cpuUtilization(currtime: Double): Long = {
-    if(currtime < _jobStartedWorking)
+    if(currtime < _jobStartedWorking || _cpuUtilization.isEmpty)
       return 0
-    _cpuUtilization(((currtime - _jobStartedWorking) / cpuUtilizationIndexAdjustment).toInt)
+
+    var index = ((currtime - _jobStartedWorking) % _memoryUtilization.length).toInt - 1
+    if(index < 0)
+      index = 0
+    val r = (_cpuUtilization(index) * cpusPerTask).toLong
+    if(r > cpusPerTask)
+      cpusPerTask
+    else
+      r
   }
 
   def memoryUtilization(currtime: Double): Long = {
-    if(currtime < _jobStartedWorking)
+    if(currtime < _jobStartedWorking || _memoryUtilization.isEmpty)
       return 0
-    _memoryUtilization(((currtime - _jobStartedWorking) / memoryUtilizationIndexAdjustment).toInt)
+
+    var index = ((currtime - _jobStartedWorking) % _memoryUtilization.length).toInt - 1
+    if(index < 0)
+      index = 0
+    val r = (_memoryUtilization(index) * memPerTask).toLong
+    if(r > memPerTask)
+      memPerTask
+    else
+      r
   }
 
   def coreClaimDeltas: mutable.HashSet[ClaimDelta] = _coreClaimDeltas
@@ -334,14 +353,50 @@ case class Job(id: Long,
     assert(timeLeft >= 0)
     timeLeft
   }
+  def remainingTimeCoresOnly: Double = {
+    assert(jobFinishedWorking == 0, {
+      "Why are you calculating the progress if the job has finished already?"
+    })
+    val timeLeft: Double = (1 - _progress) * ((numTasks / coreTasks.toDouble) * jobDuration)
+    assert(timeLeft >= 0)
+    timeLeft
+  }
 
-  def calculateProgress(currTime: Double = 0.0, newTasksAllocated: Int = 0,
-                        tasksRemoved: mutable.HashSet[ClaimDelta] = mutable.HashSet[ClaimDelta](), mock: Boolean = false): Unit = {
+//  def updateProgress(currTime: Double = 0.0): Unit = {
+//    var relativeProgress: Double = 0.0
+//    // Optimizations:
+//    //  1) if the currTime is equal to _jobStartedWorking it means that the progress is 0
+//    //  2) if the currTime is equal to _lastProgressTimeCalculation it means that we already calculated the progress
+//    // So let's avoid extra calculations to speed up the simulation
+//    if(currTime != _jobStartedWorking && currTime != _lastProgressTimeCalculation){
+//      // In case we do not calculate the progress as soon as the job starts
+//      //     so we have a _lastProgressTimeCalculation that is aligned with the starting of the job
+//      if (_lastProgressTimeCalculation < _jobStartedWorking)
+//        _lastProgressTimeCalculation = _jobStartedWorking
+//
+//      relativeProgress = (currTime - _lastProgressTimeCalculation) /
+//        ((numTasks / tasksScheduled.toDouble) * jobDuration)
+//      assert(relativeProgress >= 0 && relativeProgress <= 1, {
+//        "relativeProgress (" + relativeProgress + ") cannot be lower than 0 or higher than 1. "
+//      })
+//    }
+//
+//    _progress += relativeProgress
+//    _lastProgressTimeCalculation = currTime
+//    assert(_progress <= 1.0, {
+//      "Progress cannot be higher than 1! (" + _progress + ")"
+//    })
+//  }
+
+  def updateProgress(currTime: Double = 0.0, newTasksAllocated: Int = 0,
+                        tasksRemoved: mutable.HashSet[ClaimDelta] = mutable.HashSet[ClaimDelta]()): Unit = {
     var relativeProgress: Double = 0.0
     var progressLost: Double = 0.0
-    // Optimization: if the currTime is equal to _jobStartedWorking it means that the progress is 0
+    // Optimizations:
+    //  1) if the currTime is equal to _jobStartedWorking it means that the progress is 0
+    //  2) if the currTime is equal to _lastProgressTimeCalculation it means that we already calculated the progress
     // So let's avoid extra calculations to speed up the simulation
-    if(currTime != _jobStartedWorking){
+    if(currTime != _jobStartedWorking && currTime != _lastProgressTimeCalculation){
       // In case we do not calculate the progress as soon as the job starts
       //     so we have a _lastProgressTimeCalculation that is aligned with the starting of the job
       if (_lastProgressTimeCalculation < _jobStartedWorking)
@@ -359,13 +414,11 @@ case class Job(id: Long,
       })
     }
 
-    if (!mock) {
-      _progress += (relativeProgress - progressLost)
-      _lastProgressTimeCalculation = currTime
-      assert(_progress <= 1.0, {
-        "Progress cannot be higher than 1! (" + _progress + ")"
-      })
-    }
+    _progress += (relativeProgress - progressLost)
+    _lastProgressTimeCalculation = currTime
+    assert(_progress <= 1.0, {
+      "Progress cannot be higher than 1! (" + _progress + ")"
+    })
   }
 
 

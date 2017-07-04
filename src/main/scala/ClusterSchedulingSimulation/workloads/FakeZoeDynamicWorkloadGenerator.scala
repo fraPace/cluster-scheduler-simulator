@@ -19,27 +19,25 @@ class FakeZoeDynamicWorkloadGenerator(
     assert(timeWindow >= 0)
     val workload = new Workload(workloadName)
 
-    val jobA = Job(1, 0, 0, 100, workloadName, 100, 137438953472L, numCoreTasks = Option(1))
-    jobA.cpuUtilization = Array.fill(100)(100)
-    val memoryUtilization = Array(
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-      10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
-      10, 20, 15, 30, 15, 20, 20, 15, 10, 5,
-      6, 7, 8, 9, 10, 10, 10, 10, 10, 10,
-      10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
-      10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
-      10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
-      50, 60, 70, 80, 90, 100, 110, 120, 120, 120,
-      110, 100, 90, 80, 70, 60, 50, 40, 30, 20,
-      10, 9, 8, 7, 6, 5, 4, 3, 2, 1
-    )
-    jobA.memoryUtilization = memoryUtilization.map(_ * Constant.GiB)
+    val jobA = Job(1, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+    jobA.cpuUtilization = Array.fill(10)(0F)
+    jobA.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 0.79F)
     workload.addJob(jobA)
 
-    val jobB = Job(2, 0, 0, 6000, workloadName, 100, 137438953472L / 2, numCoreTasks = Option(1))
-    jobB.cpuUtilization = Array.fill(100)(100)
-    jobB.memoryUtilization = memoryUtilization.map(_ * Constant.GiB / 2)
-//    workload.addJob(jobB)
+    val jobB = Job(2, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+    jobB.cpuUtilization = Array.fill(10)(0F)
+    jobB.memoryUtilization = Array(0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F)
+    workload.addJob(jobB)
+
+    val jobC = Job(3, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+    jobC.cpuUtilization = Array.fill(10)(0F)
+    jobC.memoryUtilization = Array(0.49F, 0.39F, 0.29F, 0.04F, 0.29F, 0.39F, 0.49F, 0.04F, 0.39F, 0.04F)
+    workload.addJob(jobC)
+
+    val jobD = Job(4, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+    jobD.cpuUtilization = Array.fill(10)(0F)
+    jobD.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 0.79F)
+    workload.addJob(jobD)
 
     workload
   }

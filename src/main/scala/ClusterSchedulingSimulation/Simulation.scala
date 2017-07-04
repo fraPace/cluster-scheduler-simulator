@@ -76,13 +76,13 @@ object Simulation extends LazyLogging {
     val runNewSpark = false
     val runMesos = false
     val runOmega = false
-    val runZoe = true
+    val runZoe = false
     val runZoePreemption = false
     val runZoeDynamic = true
 
     val globalRunTime = 86400.0 * 90 //86400.0 // 1 Day
     val threadSleep = 5
-    val doLogging = false
+    val doLogging = true
 
     /**
       * Set up parameter sweeps.

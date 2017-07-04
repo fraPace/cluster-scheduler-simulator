@@ -399,9 +399,9 @@ class ClusterSimulator(val cellState: CellState,
   def recordWastedResources(cl: ClaimDelta): Unit = {
     cl.job match {
       case Some(job) =>
-        var i: Double = cl.creationTime
-        var index: Int = (i / monitoringPeriod).toInt
-        while(i <= currentTime){
+        var time: Double = cl.creationTime
+        var index: Int = (time / monitoringPeriod).toInt
+        while(time < currentTime){
 //          cpuAllocationWasted(index) += ((job.cpusPerTask /  cellState.totalCpus.toDouble) * percentageConversion).toShort
 //          assert(cpuAllocationWasted(index) <= 100, {
 //            "Cpu Allocation Wasted cannot be higher than 100% (" + cpuAllocationWasted(index) + "%)"
@@ -411,16 +411,16 @@ class ClusterSimulator(val cellState: CellState,
 //            "Memory Allocation Wasted cannot be higher than 100% (" + memAllocationWasted(index) + "%)"
 //          })
 
-          cpuUtilizationWasted(index) += (job.cpuUtilization(i) /  cellState.totalCpus.toDouble).toFloat
+          cpuUtilizationWasted(index) += (job.cpuUtilization(time) /  cellState.totalCpus.toDouble).toFloat
           assert(cpuUtilizationWasted(index) <= 100, {
             "Cpu Utilization Wasted cannot be higher than 100% (" + cpuUtilizationWasted(index) + "%)"
           })
-          memUtilizationWasted(index) += (job.memoryUtilization(i) /  cellState.totalMem.toDouble).toFloat
+          memUtilizationWasted(index) += (job.memoryUtilization(time) /  cellState.totalMem.toDouble).toFloat
           assert(memUtilizationWasted(index) <= 100, {
             "Memory Utilization Wasted cannot be higher than 100% (" + memUtilizationWasted(index) + "%)"
           })
           index += 1
-          i += monitoringPeriod
+          time += monitoringPeriod
         }
       case None => None
     }

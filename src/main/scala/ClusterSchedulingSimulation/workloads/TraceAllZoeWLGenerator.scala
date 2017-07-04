@@ -151,8 +151,8 @@ class TraceAllZoeWLGenerator(val workloadName: String,
 
     val arraySize: Int = newJob.jobDuration.toInt
 
-    val cpuUtilization = new Array[Int](arraySize)
-    val memUtilization = new Array[Long](arraySize)
+    val cpuUtilization = new Array[Float](arraySize)
+    val memUtilization = new Array[Float](arraySize)
     for (i <- List.range(0, arraySize)) {
       var cpuQuantile: Double = DistCache.getQuantile(cpuSlackPerTaskDist, randomNumberGenerator.nextFloat)
       while (cpuQuantile > 1.0) {
@@ -164,18 +164,8 @@ class TraceAllZoeWLGenerator(val workloadName: String,
         memQuantile = DistCache.getQuantile(memSlackPerTaskDist, randomNumberGenerator.nextFloat)
       }
 
-      val _cpu: Int = (cpuQuantile * cpusPerTask).toInt
-      val _mem: Long = (memQuantile * memPerTask).toLong
-
-      assert(_cpu.toDouble <= cpusPerTask, {
-        "CPU Utilization (" + _cpu + ") is higher than allocated (" + cpusPerTask + ")."
-      })
-      assert(_mem <= memPerTask, {
-        "Memory Utilization (" + _mem + ") is higher than allocated (" + memPerTask + ")."
-      })
-
-      cpuUtilization(i) = _cpu
-      memUtilization(i) = _mem
+      cpuUtilization(i) = cpuQuantile.toFloat
+      memUtilization(i) = memQuantile.toFloat
     }
     newJob.cpuUtilization = cpuUtilization
     newJob.memoryUtilization = memUtilization

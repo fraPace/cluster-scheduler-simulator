@@ -84,7 +84,7 @@ class ClaimDelta(val id: Long,
     "The creation time for the claimDelta cannot be negative. " + creationTime + "s."
   })
 
-  lazy val loggerPrefix: String = "[" + id + "]"
+  lazy val loggerPrefix: String = "[" + id + " (" + taskType + ")]"
 
   var currentCpus: Long = requestedCpus
   var currentMem: Long = requestedMem
@@ -129,16 +129,16 @@ class ClaimDelta(val id: Long,
 
   def checkResourcesLimits(cpus: Long, mem: Long): ClaimDeltaStatus.Value = {
     if (currentCpus < cpus) {
-      scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A claimDelta on machine " + machineID +
-        " is using more CPUs than allocated. Originally Requested: " + requestedCpus + " Allocated: " +
-        currentCpus + " Current: " + cpus)
+      scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
+        " This claimDelta on machine " + machineID + " is using more CPUs than allocated. Originally Requested: " +
+        requestedCpus + " Allocated: " + currentCpus + " Current: " + cpus)
       status = ClaimDeltaStatus.CPUKilled
     }
 
     if (currentMem < mem) {
-      scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A claimDelta on machine " + machineID +
-        " is using more memory than allocated. Originally Requested: " + requestedMem + " Allocated: " +
-        currentMem + " Current: " + mem)
+      scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
+        " This claimDelta on machine " + machineID + " is using more memory than allocated. Originally Requested: " +
+        requestedMem + " Allocated: " + currentMem + " Current: " + mem)
       status = ClaimDeltaStatus.OOMKilled
     }
     status
@@ -176,7 +176,8 @@ class ClaimDelta(val id: Long,
   }
 
   def resize(cellState: CellState, cpus: Long, mem: Long, locked: Boolean = false, resizePolicy: ResizePolicy): (Long, Long) = {
-    scheduler.simulator.logger.debug(scheduler.loggerPrefix + " Resizing a claimDelta from " + currentCpus + " CPUs and %.2fGiB".format(currentMem / Constant.GiB.toDouble) +
+    scheduler.simulator.logger.debug(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
+      " Resizing this claimDelta from " + currentCpus + " CPUs and %.2fGiB".format(currentMem / Constant.GiB.toDouble) +
       " memory to " + cpus + " CPUs and %.2fGiB".format(mem / Constant.GiB.toDouble) + " Memory. The status is " +
       status + " and the resize policy is " + resizePolicy)
 
@@ -193,8 +194,8 @@ class ClaimDelta(val id: Long,
         cellState.assignResources(scheduler, machineID, deltaCpus, 0L, locked)
       }
       else {
-        scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A claimDelta on machine " + machineID +
-          " may crash because there are not enough CPUs to allocate. Originally Requested: " +
+        scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
+          " This claimDelta on machine " + machineID + " may crash because there are not enough CPUs to allocate. Originally Requested: " +
           requestedCpus + " Allocated: "+ currentCpus + " Current Requested: " + cpus + " Slack: " + deltaCpus)
         status = ClaimDeltaStatus.CPURisk
         cpusStillNeeded = deltaCpus
@@ -214,8 +215,8 @@ class ClaimDelta(val id: Long,
         cellState.assignResources(scheduler, machineID, 0, deltaMem, locked)
       }
       else {
-        scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + " A claimDelta on machine " + machineID +
-          " may crash because there are not enough memory to allocate. Originally Requested: " +
+        scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
+          " This claimDelta on machine " + machineID + " may crash because there are not enough memory to allocate. Originally Requested: " +
           requestedMem + " Allocated: "+ currentMem + " Current Requested: " + mem + " Slack: " + deltaMem)
         status = ClaimDeltaStatus.OOMRisk
         memStillNeeded = deltaMem
@@ -226,7 +227,8 @@ class ClaimDelta(val id: Long,
     }
     currentMem += deltaMem
 
-    scheduler.simulator.logger.debug(scheduler.loggerPrefix + " The new claimDelta has " + currentCpus + " CPUs and %.2fGiB".format(currentMem / Constant.GiB.toDouble) +
+    scheduler.simulator.logger.debug(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
+      " This claimDelta now has " + currentCpus + " CPUs and %.2fGiB".format(currentMem / Constant.GiB.toDouble) +
       " memory. Resources slack was: " + deltaCpus + " CPUs " + deltaMem + " Memory. The status is " + status)
 
     (deltaCpus, deltaMem)
