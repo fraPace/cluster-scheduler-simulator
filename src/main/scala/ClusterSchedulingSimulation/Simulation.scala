@@ -39,6 +39,7 @@ import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 
 object Simulation extends LazyLogging {
   def main(args: Array[String]) {
+
     val availableProcessors = Runtime.getRuntime.availableProcessors()
     val helpString = "Usage: bin/sbt run [--thread-pool-size INT_NUM_THREADS] [--random-seed INT_SEED_VALUE]"
     val pp = new ParseParams(helpString)
@@ -58,16 +59,6 @@ object Simulation extends LazyLogging {
     var numThreads = Math.min(inputArgs("--thread-pool-size").toInt, availableProcessors)
     val randomSeed: Long = inputArgs("--random-seed").toLong
 
-    //    if (args.length > 0) {
-    //      if (args.head.equals("--help") || args.head.equals("-h")) {
-    //        println(helpString)
-    //        System.exit(0)
-    //      }
-    //    }
-
-    logger.info("RUNNING CLUSTER SIMULATOR EXPERIMENTS")
-
-
     /**
       * Start Config Variables
       */
@@ -82,7 +73,7 @@ object Simulation extends LazyLogging {
 
     val globalRunTime = 86400.0 * 90 //86400.0 // 1 Day
     val threadSleep = 5
-    val doLogging = true
+    val doLogging = false
 
     /**
       * Set up parameter sweeps.
@@ -217,7 +208,6 @@ object Simulation extends LazyLogging {
       * Choose which "experiment environments" (i.e. WorkloadDescs)
       * we want to use.
       */
-    logger.info("Loading Traces...")
     var allWorkloadDescs = List[WorkloadDesc]()
     // allWorkloadDescs ::= exampleWorkloadDesc
 
@@ -241,17 +231,13 @@ object Simulation extends LazyLogging {
 
     var allExperiments: List[Experiment] = List()
     val wlDescs = allWorkloadDescs
-    wlDescs.foreach(wlDesc => {
-      wlDesc.generateWorkloads(globalRunTime)
-    })
 
     // Make the experiment_results dir if it doesn't exist
     val experDir = new java.io.File("experiment_results")
-    if (!experDir.exists) {
-      logger.info("Creating the 'experiment_results' dir.")
+    if (!experDir.exists){
       experDir.mkdir()
     }
-    val outputDirName = experDir.toString + "/" + dateTimeStamp + "-" + "vary_" + sweepDimensions.mkString("_") +
+    val outputDirName: String = experDir.toString + "/" + dateTimeStamp + "-" + "vary_" + sweepDimensions.mkString("_") +
       "-" + wlDescs.map(value => {
       value.cell + value.assignmentPolicy +
         (if (value.prefillWorkloadGenerators.nonEmpty) {
@@ -260,7 +246,13 @@ object Simulation extends LazyLogging {
           ""
         })
     }).mkString("_") + "-%.0f".format(globalRunTime)
+    System.setProperty("experiment.dir", outputDirName)
     logger.info("outputDirName is " + outputDirName)
+
+    logger.info("Generating Workloads...")
+    wlDescs.foreach(wlDesc => {
+      wlDesc.generateWorkloads(globalRunTime)
+    })
 
 
     logger.info("Setting up Schedulers...")

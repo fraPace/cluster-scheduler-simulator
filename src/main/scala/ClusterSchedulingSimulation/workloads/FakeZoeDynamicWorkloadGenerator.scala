@@ -22,21 +22,25 @@ class FakeZoeDynamicWorkloadGenerator(
     val jobA = Job(1, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
     jobA.cpuUtilization = Array.fill(10)(0F)
     jobA.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 0.79F)
+//    jobA.memoryUtilization = Array.fill(10)(1.0F)
     workload.addJob(jobA)
 
     val jobB = Job(2, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
     jobB.cpuUtilization = Array.fill(10)(0F)
     jobB.memoryUtilization = Array(0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F)
+//    jobB.memoryUtilization = Array.fill(10)(1.0F)
     workload.addJob(jobB)
 
     val jobC = Job(3, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
     jobC.cpuUtilization = Array.fill(10)(0F)
     jobC.memoryUtilization = Array(0.49F, 0.39F, 0.29F, 0.04F, 0.29F, 0.39F, 0.49F, 0.04F, 0.39F, 0.04F)
+//    jobC.memoryUtilization = Array.fill(10)(1.0F)
     workload.addJob(jobC)
 
     val jobD = Job(4, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
     jobD.cpuUtilization = Array.fill(10)(0F)
     jobD.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 0.79F)
+//    jobD.memoryUtilization = Array.fill(10)(1.0F)
     workload.addJob(jobD)
 
     workload

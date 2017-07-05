@@ -30,27 +30,26 @@ class TraceAllZoeWLGenerator(val workloadName: String,
                              allCore: Boolean = false,
                              introduceError: Boolean = false)
   extends WorkloadGenerator {
-  logger.info("Generating " + workloadName + " Workload...")
   assert(workloadName.equals("Batch") || workloadName.equals("Service") || workloadName.equals("Interactive") || workloadName.equals("Batch-MPI"))
 
-  val cpuSlackPerTaskDist: Array[Double] =
+  lazy val cpuSlackPerTaskDist: Array[Double] =
     DistCache.getDistribution(workloadName, cpuSlackTraceFileName)
-  val memSlackPerTaskDist: Array[Double] =
+  lazy val memSlackPerTaskDist: Array[Double] =
     DistCache.getDistribution(workloadName, memorySlackTraceFileName)
 
-  val cpusPerTaskDist: Array[Double] =
+  lazy val cpusPerTaskDist: Array[Double] =
     PrefillJobListsCache.getCpusPerTaskDistribution(workloadName, prefillTraceFileName)
-  val memPerTaskDist: Array[Double] =
+  lazy val memPerTaskDist: Array[Double] =
     PrefillJobListsCache.getMemPerTaskDistribution(workloadName, prefillTraceFileName)
-  val randomNumberGenerator = new util.Random(Seed())
+  lazy val randomNumberGenerator = new util.Random(Seed())
   /**
     * Build distributions
     */
-  var interarrivalDist: Array[Double] =
+  lazy val interarrivalDist: Array[Double] =
     DistCache.getDistribution(workloadName, interarrivalTraceFileName)
-  var tasksPerJobDist: Array[Double] =
+  lazy val tasksPerJobDist: Array[Double] =
     DistCache.getDistribution(workloadName, tasksPerJobTraceFileName)
-  var jobDurationDist: Array[Double] = if (!workloadName.equals("Interactive")) {
+  lazy val jobDurationDist: Array[Double] = if (!workloadName.equals("Interactive")) {
     DistCache.getDistribution(workloadName, jobDurationTraceFileName)
   } else {
     DistCache.getDistribution(workloadName, "interactive-runtime-dist")
@@ -61,6 +60,8 @@ class TraceAllZoeWLGenerator(val workloadName: String,
                   maxMem: Option[Long] = None,
                   updatedAvgJobInterarrivalTime: Option[Double] = None)
   : Workload = this.synchronized {
+    logger.info("Generating " + workloadName + " Workload...")
+
     assert(timeWindow >= 0)
     assert(maxCpus.isEmpty)
     assert(maxMem.isEmpty)
@@ -107,7 +108,9 @@ class TraceAllZoeWLGenerator(val workloadName: String,
     //    assert(numJobs == workload.numJobs, "Num Jobs generated differs from what has been asked")
     workload.sortJobs()
     val lastJob = workload.getJobs.last
-    logger.info("[" + workloadName + "] The last job arrives at " + lastJob.submitted + " and will finish at " + (lastJob.submitted + lastJob.jobDuration))
+    logger.info("The last job arrives at " + lastJob.submitted + " and will finish at " + (lastJob.submitted + lastJob.jobDuration))
+
+    logger.info("Done generating " + workloadName + " Workload.\n")
 
     workload
   }
@@ -187,6 +190,4 @@ class TraceAllZoeWLGenerator(val workloadName: String,
     //      error = 1 - (randomNumberGenerator.nextDouble() * (randomNumberGenerator.nextInt(2) - 1))
     //    error
   }
-
-  logger.info("Done generating " + workloadName + " Workload.\n")
 }
