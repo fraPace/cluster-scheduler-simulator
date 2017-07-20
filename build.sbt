@@ -49,6 +49,10 @@ libraryDependencies += "com.typesafe.scala-logging" %% "scala-logging" % "3.5.0"
 
 libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.1.7"
 
+libraryDependencies += "org.scalanlp" %% "breeze" % "0.13.1"
 
+libraryDependencies += "org.scalanlp" %% "breeze-natives" % "0.13.1"
 
+libraryDependencies += "org.scalanlp" %% "breeze-viz" % "0.13.1"
 
+resolvers += "Sonatype Releases" at "https://oss.sonatype.org/content/repositories/releases/"

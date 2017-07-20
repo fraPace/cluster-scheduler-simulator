@@ -2,6 +2,10 @@ package ClusterSchedulingSimulation.workloads
 
 import ClusterSchedulingSimulation.core._
 import ClusterSchedulingSimulation.utils.{Seed, UniqueIDGenerator}
+import breeze.linalg._
+import breeze.plot._
+import breeze.signal.OptOverhang
+import breeze.stats.distributions.{Bernoulli, Gaussian, RandBasis}
 import org.apache.commons.math3.distribution.LogNormalDistribution
 
 /**
@@ -54,6 +58,9 @@ class TraceAllZoeWLGenerator(val workloadName: String,
   } else {
     DistCache.getDistribution(workloadName, "interactive-runtime-dist")
   }
+
+  lazy val normalDistribution: Gaussian = new Gaussian(0, 1)(RandBasis.withSeed(0))
+  lazy val bernoulliDistribution: Bernoulli = new  Bernoulli(0.01)(RandBasis.withSeed(0))
 
   def newWorkload(timeWindow: Double,
                   maxCpus: Option[Long] = None,
@@ -153,27 +160,78 @@ class TraceAllZoeWLGenerator(val workloadName: String,
       error = generateError())
 
     val arraySize: Int = newJob.jobDuration.toInt
-
-    val cpuUtilization = new Array[Float](arraySize)
-    val memUtilization = new Array[Float](arraySize)
-    for (i <- List.range(0, arraySize)) {
-      var cpuQuantile: Double = DistCache.getQuantile(cpuSlackPerTaskDist, randomNumberGenerator.nextFloat)
-      while (cpuQuantile > 1.0) {
-        cpuQuantile = DistCache.getQuantile(cpuSlackPerTaskDist, randomNumberGenerator.nextFloat)
-      }
-
-      var memQuantile: Double = DistCache.getQuantile(cpuSlackPerTaskDist, randomNumberGenerator.nextFloat)
-      while (memQuantile > 1.0) {
-        memQuantile = DistCache.getQuantile(memSlackPerTaskDist, randomNumberGenerator.nextFloat)
-      }
-
-      cpuUtilization(i) = cpuQuantile.toFloat
-      memUtilization(i) = memQuantile.toFloat
+    var cpuMean: Double = DistCache.getQuantile(cpuSlackPerTaskDist, randomNumberGenerator.nextFloat)
+    while (cpuMean > 1.0 || cpuMean <= 0.0) {
+      cpuMean = DistCache.getQuantile(cpuSlackPerTaskDist, randomNumberGenerator.nextFloat)
     }
-    newJob.cpuUtilization = cpuUtilization
-    newJob.memoryUtilization = memUtilization
+    var memMean: Double = DistCache.getQuantile(memSlackPerTaskDist, randomNumberGenerator.nextFloat)
+    while (memMean > 1.0 || memMean <= 0.0) {
+      memMean = DistCache.getQuantile(memSlackPerTaskDist, randomNumberGenerator.nextFloat)
+    }
+    newJob.cpuUtilization = generateResourceUtilization(cpuMean, arraySize)
+    newJob.memoryUtilization = generateResourceUtilization(memMean, arraySize)
 
     newJob
+  }
+
+  def generateResourceUtilization(targetMean: Double, length: Int): Array[Float] = {
+    def distValue: Float = {
+      normalDistribution.sample().toFloat * bernoulliDistribution.sample().compareTo(false)
+    }
+    // Drawn values from distribution.
+    // We create an array of size - 1 to compensate for the CumSUM (that will add one value)
+    var resourceUtilization = Array.fill(length - 1)(distValue)
+    // Apply CumSUM.
+    resourceUtilization = resourceUtilization.scanLeft(0F)(_+_)
+    // Apply convolution for smoothing
+    val convolveWindow = 10
+    resourceUtilization = breeze.signal.convolve(
+      DenseVector(resourceUtilization),
+      DenseVector(Array.fill(convolveWindow)(1 / convolveWindow.toFloat)),
+      overhang = OptOverhang.PreserveLength).toArray
+
+    // Normalize the curve so that the results are in the interval [-1, 1]
+    val max = resourceUtilization.max
+    var min = resourceUtilization.min
+    val span = (max - min).toDouble
+    var i = 0
+    while(i < resourceUtilization.length){
+      resourceUtilization(i) = (resourceUtilization(i) / span).toFloat
+      i += 1
+    }
+
+    // Shift the curve so that we have values in the interval [0, 1]
+    min = resourceUtilization.min
+    val y_offset = if(min < 0) -min else 0
+    i = 0
+    while(i < resourceUtilization.length){
+      resourceUtilization(i) = resourceUtilization(i) + y_offset
+      i += 1
+    }
+
+    // Adjust the curve so that it meets the desired mean
+    var mean = breeze.stats.mean(resourceUtilization)
+    val _targetMean = Math.round(targetMean.toFloat * 1000)
+    var steps = 0
+    while(Math.abs(_targetMean - Math.round(mean * 1000)) > 1){
+      val meanRatio = targetMean / mean
+      i = 0
+      while(i < resourceUtilization.length){
+        val v = (resourceUtilization(i) * meanRatio).toFloat
+        resourceUtilization(i) = if(v > 1F) 1F else if(v < 0F) 0F else v
+        i += 1
+      }
+      // We prevent infinity loops by exiting if we could not improve the mean at this step
+      var tmp_mean = breeze.stats.mean(resourceUtilization)
+      if(tmp_mean == mean){
+        logger.warn("Curve cannot converge to desired mean. Target Mean: " + targetMean + " Current Mean: " + mean)
+        tmp_mean = targetMean.toFloat
+      }
+      mean = tmp_mean
+      steps += 1
+    }
+
+    resourceUtilization
   }
 
   def generateError(mu: Double = 0, sigma: Double = 0.5, factor: Double = 1): Double = {
