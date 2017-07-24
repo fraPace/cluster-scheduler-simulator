@@ -10,41 +10,94 @@ class FakeZoeDynamicWorkloadGenerator(
                                 val workloadName: String
                               )
   extends WorkloadGenerator {
-  logger.info("Generating " + workloadName + " Workload...")
 
   def newWorkload(timeWindow: Double,
                   maxCpus: Option[Long] = None,
                   maxMem: Option[Long] = None,
                   updatedAvgJobInterarrivalTime: Option[Double] = None): Workload = this.synchronized {
+    logger.info("Generating " + workloadName + " Workload...")
+
     assert(timeWindow >= 0)
     val workload = new Workload(workloadName)
 
-    val jobA = Job(1, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
-    jobA.cpuUtilization = Array.fill(10)(0F)
-    jobA.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 0.79F)
+    var job = Job(1, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+    job.cpuUtilization = Array.fill(10)(0F)
+    job.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 0.79F)
 //    jobA.memoryUtilization = Array.fill(10)(1.0F)
-    workload.addJob(jobA)
+    workload.addJob(job)
 
-    val jobB = Job(2, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
-    jobB.cpuUtilization = Array.fill(10)(0F)
-    jobB.memoryUtilization = Array(0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F)
+    job = Job(2, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+    job.cpuUtilization = Array.fill(10)(0F)
+    job.memoryUtilization = Array(0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F)
 //    jobB.memoryUtilization = Array.fill(10)(1.0F)
-    workload.addJob(jobB)
+    workload.addJob(job)
 
-    val jobC = Job(3, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
-    jobC.cpuUtilization = Array.fill(10)(0F)
-    jobC.memoryUtilization = Array(0.49F, 0.39F, 0.29F, 0.04F, 0.29F, 0.39F, 0.49F, 0.04F, 0.39F, 0.04F)
+    job = Job(3, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+    job.cpuUtilization = Array.fill(10)(0F)
+    job.memoryUtilization = Array(0.49F, 0.39F, 0.29F, 0.04F, 0.29F, 0.39F, 0.49F, 0.04F, 0.39F, 0.04F)
 //    jobC.memoryUtilization = Array.fill(10)(1.0F)
-    workload.addJob(jobC)
+    workload.addJob(job)
 
-    val jobD = Job(4, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
-    jobD.cpuUtilization = Array.fill(10)(0F)
-    jobD.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 0.79F)
+    job = Job(4, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+    job.cpuUtilization = Array.fill(10)(0F)
+    job.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 0.79F)
 //    jobD.memoryUtilization = Array.fill(10)(1.0F)
-    workload.addJob(jobD)
+    workload.addJob(job)
+
+
+
+//    job = Job(5, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+//    job.cpuUtilization = Array.fill(10)(0F)
+//    job.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 1F) // 0.79F)
+//    //    jobA.memoryUtilization = Array.fill(10)(1.0F)
+//    workload.addJob(job)
+//
+//    job = Job(6, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+//    job.cpuUtilization = Array.fill(10)(0F)
+//    job.memoryUtilization = Array(0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 1F) // 0.09F)
+//    //    jobB.memoryUtilization = Array.fill(10)(1.0F)
+//    workload.addJob(job)
+//
+//    job = Job(7, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+//    job.cpuUtilization = Array.fill(10)(0F)
+//    job.memoryUtilization = Array(0.49F, 0.39F, 0.29F, 0.04F, 0.29F, 0.39F, 0.49F, 0.04F, 0.39F, 1F) // 0.04F)
+//    //    jobC.memoryUtilization = Array.fill(10)(1.0F)
+//    workload.addJob(job)
+//
+//    job = Job(8, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+//    job.cpuUtilization = Array.fill(10)(0F)
+//    job.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 1F) // 0.79F)
+//    //    jobD.memoryUtilization = Array.fill(10)(1.0F)
+//    workload.addJob(job)
+//
+//
+//
+//    job = Job(9, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+//    job.cpuUtilization = Array.fill(10)(0F)
+//    job.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 1F) // 0.79F)
+//    //    jobA.memoryUtilization = Array.fill(10)(1.0F)
+//    workload.addJob(job)
+//
+//    job = Job(10, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+//    job.cpuUtilization = Array.fill(10)(0F)
+//    job.memoryUtilization = Array(0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 0.09F, 1F) // 0.09F)
+//    //    jobB.memoryUtilization = Array.fill(10)(1.0F)
+//    workload.addJob(job)
+//
+//    job = Job(11, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+//    job.cpuUtilization = Array.fill(10)(0F)
+//    job.memoryUtilization = Array(0.49F, 0.39F, 0.29F, 0.04F, 0.29F, 0.39F, 0.49F, 0.04F, 0.39F, 1F) // 0.04F)
+//    //    jobC.memoryUtilization = Array.fill(10)(1.0F)
+//    workload.addJob(job)
+//
+//    job = Job(12, 0, 7, 10, workloadName, 100, 13743895347L, numCoreTasks = Option(3))
+//    job.cpuUtilization = Array.fill(10)(0F)
+//    job.memoryUtilization = Array(0.19F, 0.39F, 0.59F, 0.79F, 0.59F, 0.39F, 0.19F, 0.79F, 0.59F, 1F) // 0.79F)
+//    //    jobD.memoryUtilization = Array.fill(10)(1.0F)
+//    workload.addJob(job)
+
+    logger.info("Done generating " + workloadName + " Workload.\n")
 
     workload
   }
-
-  logger.info("Done generating " + workloadName + " Workload.\n")
 }

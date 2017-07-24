@@ -33,10 +33,11 @@ import ClusterSchedulingSimulation.core.ClaimDelta.ResizePolicy
 import ClusterSchedulingSimulation.core.ClaimDelta.ResizePolicy.ResizePolicy
 import ClusterSchedulingSimulation.core.{TaskType, _}
 import com.typesafe.scalalogging.LazyLogging
+import org.apache.commons.math3.distribution.LogNormalDistribution
+import org.apache.commons.math3.random.Well19937c
 
 import scala.collection.mutable
-import scala.collection.mutable.{ArrayBuffer, ListBuffer}
-import util.control.Breaks._
+import scala.collection.mutable.ListBuffer
 
 /* This class and its subclasses are used by factory method
  * ClusterSimulator.newScheduler() to determine which type of Simulator
@@ -118,20 +119,17 @@ class ZoeDynamicScheduler (name: String,
   logger.debug("scheduler-id-info: " + Thread.currentThread().getId + ", " + name + ", " + hashCode() + ", " + constantThinkTimes.mkString(";")
     + ", " + perTaskThinkTimes.mkString(";"))
 
-  override val enableCellStateSnapshot: Boolean = false
-
-  val reclaimResourcesPeriod: Int = 1
   lazy val fclLoggerPrefix: String = "[FCL]"
 
   // This variable is used to checked if loops are running correctly at the given period
   // and to prevent running two events at the same time
   var previousCheckingResourceUtilizationTime: Double = -1
 
-  val crashedAllowed = 1
-
   val resizePolicy: ResizePolicy = ResizePolicy.Instant
-
-  var forceWakeUpScheduler:Boolean = false
+  override val enableCellStateSnapshot: Boolean = false
+  val reclaimResourcesPeriod: Int = 1
+  val crashedAllowed = 1
+  val oracle: Oracle = Oracle(window = 1, interval = reclaimResourcesPeriod, introduceError = false)
 
   override def addJob(job: Job): Unit = {
 //    val maxMemNeeded: Long = job.memoryUtilization.max
@@ -151,29 +149,6 @@ class ZoeDynamicScheduler (name: String,
         checkResourceUtilization()
       }
     }
-  }
-
-  val futureStepsToPredict: Int = 1
-  def predictFutureResourceUtilization(job: Job): (Long, Long) = {
-    def max(job: Job): (Long, Long) = {
-      var cpus: Long = 0
-      var mem: Long = 0
-
-      var i = 0
-      while(i <= futureStepsToPredict){
-        var v = job.cpuUtilization(simulator.currentTime + reclaimResourcesPeriod * i)
-        if(v > cpus)
-          cpus = v
-        v = job.memoryUtilization(simulator.currentTime + reclaimResourcesPeriod * i)
-        if(v > mem)
-          mem = v
-        i += 1
-      }
-
-      (cpus, mem)
-    }
-
-    max(job)
   }
 
   def jobCrashed(job: Job): Unit = {
@@ -211,10 +186,12 @@ class ZoeDynamicScheduler (name: String,
     removeRunningJob(job)
     job.reset()
     addPendingJob(job)
-    forceWakeUpScheduler = true
   }
 
   def elasticsClaimDeltasCrashed(job: Job, elastic: mutable.HashSet[ClaimDelta]): Unit = {
+    if(elastic.isEmpty)
+      return
+
     simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Some (" + elastic.size + ") elastic components crashed.")
 
     job.numTasksCrashed += elastic.size
@@ -222,6 +199,9 @@ class ZoeDynamicScheduler (name: String,
   }
 
   def killElasticClaimDeltas(job: Job, elastic: mutable.HashSet[ClaimDelta]): Unit = {
+    if(elastic.isEmpty)
+      return
+
     simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Killing elastic components for this job: " +
       elastic.foldLeft("")((b, a) => b + " " + a.id))
 
@@ -243,14 +223,12 @@ class ZoeDynamicScheduler (name: String,
     updateJobFinishingEvents(job, elasticsRemoved = elastic)
 
     // We have to reinsert the job in queue if this had all it's elastic services allocated
-    if (addToPendingQueue) {
+    if (addToPendingQueue)
       addPendingJob(job)
-      forceWakeUpScheduler = true
-    }
   }
 
   def checkResourceUtilization(): Unit = {
-    simulator.logger.info(loggerPrefix + fclLoggerPrefix + " checkResourceUtilization called. The global cell state is ("
+    simulator.logger.debug(loggerPrefix + fclLoggerPrefix + " checkResourceUtilization called. The global cell state is ("
       + simulator.cellState.availableCpus + " CPUs, " + simulator.cellState.availableMem + " mem)")
 
     assert(Math.round(simulator.currentTime - previousCheckingResourceUtilizationTime).toInt == reclaimResourcesPeriod, {
@@ -265,10 +243,12 @@ class ZoeDynamicScheduler (name: String,
 
 //    val jobsClaimDeltasOOMRisk_naive: mutable.HashMap[Job, mutable.HashSet[ClaimDelta]] = mutable.HashMap[Job, mutable.HashSet[ClaimDelta]]()
 //    val jobsClaimDeltasOOMRisk_lesserNaive: mutable.HashMap[Job, mutable.HashSet[ClaimDelta]] = mutable.HashMap[Job, mutable.HashSet[ClaimDelta]]()
-//    val machineIDsWithClaimDeltasOOMRisk: mutable.HashSet[Int] = mutable.HashSet[Int]()
+//    val machineIDsWithClaimDeltasOOMRisk: mutable.LinkedHashSet[Int] = mutable.LinkedHashSet[Int]()
 
     val claimDeltasOOMRiskPerMachine: Array[(mutable.LinkedHashSet[ClaimDelta], mutable.LinkedHashSet[ClaimDelta])] =
       Array.fill(simulator.cellState.numMachines)((mutable.LinkedHashSet[ClaimDelta](), mutable.LinkedHashSet[ClaimDelta]()))
+
+    val machinesToCheckForOOMRisk: Array[Boolean] = Array.fill(simulator.cellState.numMachines)(false)
 
     var cpuVariation: Long = 0
     var memVariation: Long = 0
@@ -288,17 +268,17 @@ class ZoeDynamicScheduler (name: String,
             if (!job.disableResize &&
               job.finalStatus != JobStatus.Crashed && job.finalStatus != JobStatus.Completed && job.finalStatus != JobStatus.Not_Scheduled) {
 
-              if(claimDelta.checkResourcesLimits(job.cpuUtilization(simulator.currentTime), job.memoryUtilization(simulator.currentTime)) == ClaimDeltaStatus.OOMKilled){
-                val (_, elastics) = jobsClaimDeltasOOMKilled.getOrElse(job, (false, mutable.HashSet[ClaimDelta]()))
+              if(claimDelta.checkResourcesLimits(simulator.currentTime) == ClaimDeltaStatus.OOMKilled){
+                val (core, elastics) = jobsClaimDeltasOOMKilled.getOrElse(job, (false, mutable.HashSet[ClaimDelta]()))
                 if (claimDelta.taskType == TaskType.Elastic) {
-                  jobsClaimDeltasOOMKilled(job) = (false, elastics + claimDelta)
+                  jobsClaimDeltasOOMKilled(job) = (core, elastics + claimDelta)
                 } else {
                   jobsClaimDeltasOOMKilled(job) = (true, elastics)
                 }
               }else{
-                val (cpu, mem) = predictFutureResourceUtilization(job)
+                val (cpu, mem) = oracle.predictFutureResourceUtilization(job, simulator.currentTime)
                 val (resizeCpus, resizeMem) = claimDelta.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
-                simulator.logger.info(loggerPrefix + fclLoggerPrefix + claimDelta.job.get.loggerPrefix + claimDelta.loggerPrefix + " This claimDelta will use " +
+                simulator.logger.debug(loggerPrefix + fclLoggerPrefix + claimDelta.job.get.loggerPrefix + claimDelta.loggerPrefix + " This claimDelta will use " +
                   resizeMem + " memory, %.2f".format(resizeMem / claimDelta.requestedMem.toDouble) + "% than originally requested")
                 val (slackCpu, slackMem) = claimDelta.resize(simulator.cellState, resizeCpus, resizeMem, resizePolicy = resizePolicy)
                 cpuVariation += slackCpu
@@ -306,6 +286,7 @@ class ZoeDynamicScheduler (name: String,
 
                 if(claimDelta.status == ClaimDeltaStatus.OOMRisk){
 //                  machineIDsWithClaimDeltasOOMRisk.add(machineID)
+                  machinesToCheckForOOMRisk(machineID) = true
 //                  jobsClaimDeltasOOMRisk_lesserNaive(job) = jobsClaimDeltasOOMRisk_lesserNaive.getOrElse(job, mutable.HashSet[ClaimDelta]()) + claimDelta
                   val (cores, elastics) = claimDeltasOOMRiskPerMachine(machineID)
                   if(claimDelta.taskType == TaskType.Core) {
@@ -348,8 +329,10 @@ class ZoeDynamicScheduler (name: String,
 //    val (slackCpu, slackMem) = preventCrashes_naiveApproach(jobsClaimDeltasOOMRisk_naive, takeWhile = true)
 //    val (slackCpu, slackMem) = preventCrashes_lesserNaiveApproach(jobsClaimDeltasOOMRisk_lesserNaive)
 //    val (slackCpu, slackMem) = preventCrashes_lesserNaiveApproach(jobsClaimDeltasOOMRisk_lesserNaive, takeWhile = true)
-//    val (slackCpu, slackMem) = preventCrashes_smarterApproach(machineIDsWithClaimDeltasOOMRisk)
-    val (slackCpu, slackMem) = preventCrashes_baseApproach(claimDeltasOOMRiskPerMachine)
+//    val (slackCpu, slackMem) = preventCrashes_baseApproach(claimDeltasOOMRiskPerMachine)
+    val (slackCpu, slackMem) = preventCrashes_base2Approach(machinesToCheckForOOMRisk)
+//    val (slackCpu, slackMem) = preventCrashes_smarterApproach(machinesToCheckForOOMRisk)
+//    val (slackCpu, slackMem) = preventCrashes_base3Approach(machinesToCheckForOOMRisk)
     cpuVariation += slackCpu
     memVariation += slackMem
 
@@ -363,11 +346,12 @@ class ZoeDynamicScheduler (name: String,
       "The available cpus (" + (simulator.cellState.totalCpus - cpuOccupied) + ") from all the allocated claimDeltas does not correspond to the one in the cell (" + simulator.cellState.availableCpus + ")"
     })
 
-    simulator.logger.info(loggerPrefix + fclLoggerPrefix + " Variation of " + cpuVariation + " CPUs and " + memVariation +
+    simulator.logger.debug(loggerPrefix + fclLoggerPrefix + " Variation of " + cpuVariation + " CPUs and " + memVariation +
       " memory. The global cell state now is (" + simulator.cellState.availableCpus + " CPUs, " + simulator.cellState.availableMem + " mem)")
 
     // This control checks if we claimed some resources (negative values)
-    if (cpuVariation < 0 || memVariation < 0 || forceWakeUpScheduler) {
+//    if (cpuVariation < 0 || memVariation < 0 || forceWakeUpScheduler) {
+    if(pendingQueueSize > 0 && (originalCpusAvailable != simulator.cellState.availableCpus || originalMemoryAvailable != simulator.cellState.availableMem)){
       simulator.logger.info(loggerPrefix + fclLoggerPrefix + " Getting up to check if I can schedule some jobs with the reclaimed resources")
       wakeUp()
 //      forceWakeUpScheduler = false
@@ -392,7 +376,7 @@ class ZoeDynamicScheduler (name: String,
           assert(machineID == claimDelta.machineID)
           val job: Job = claimDelta.job.get
 
-          val (cpu, mem) = predictFutureResourceUtilization(job)
+          val (cpu, mem) = oracle.predictFutureResourceUtilization(job, simulator.currentTime)
           val (resizeCpus, resizeMem) = claimDelta.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
           val (slackCpu, slackMem) = claimDelta.resize(simulator.cellState, resizeCpus, resizeMem, resizePolicy = resizePolicy)
           cpuVariation += slackCpu
@@ -451,31 +435,40 @@ class ZoeDynamicScheduler (name: String,
 //              }else 0)
 //            })
 
-            simulator.cellState.claimDeltasPerMachine(machineID).reverseIterator.takeWhile(_ => memToFree > 0).foreach(cd => {
-              memToFree -= (if (cd.job.get.id != job.id
-                && policy.compare(job, cd.job.get) <= 0) {
-                if(cd.taskType == TaskType.Elastic){
-                  val (c, e) = jobsClaimDeltasToKill.getOrElse(cd.job.get, (false, mutable.HashSet[ClaimDelta]()))
-                  jobsClaimDeltasToKill(cd.job.get) = (c, e + cd)
-                }else if(cd.taskType == TaskType.Core){
-                  jobsClaimDeltasToKill(cd.job.get) = (true, mutable.HashSet[ClaimDelta]())
-                }
-                cd.currentMem
-              }else 0)
+            simulator.cellState.claimDeltasPerMachine(machineID).reverseIterator.takeWhile(cd => memToFree > 0 && claimDelta.id != cd.id).foreach(cd => {
+              memToFree -= (
+//                if (policy.compare(job, cd.job.get) <= 0) {
+                  if(cd.job.get.id != job.id){
+                    if(cd.taskType == TaskType.Elastic){
+                      val (c, e) = jobsClaimDeltasToKill.getOrElse(cd.job.get, (false, mutable.HashSet[ClaimDelta]()))
+                      jobsClaimDeltasToKill(cd.job.get) = (c, e + cd)
+                    }else if(cd.taskType == TaskType.Core){
+                      jobsClaimDeltasToKill(cd.job.get) = (true, mutable.HashSet[ClaimDelta]())
+                    }
+                    cd.currentMem
+                  }else{
+                    if(cd.taskType == TaskType.Elastic){
+                      val (c, e) = jobsClaimDeltasToKill.getOrElse(cd.job.get, (false, mutable.HashSet[ClaimDelta]()))
+                      jobsClaimDeltasToKill(cd.job.get) = (c, e + cd)
+                      cd.currentMem
+                    }else 0
+                  }
+//                }else 0
+              )
             })
 
-            if(memToFree > 0 && claimDelta.taskType == TaskType.Core){
-              simulator.logger.info(loggerPrefix + fclLoggerPrefix + claimDelta.job.get.loggerPrefix +
-                " ClaimDelta was in OOMRisk and we could NOT free some resources for it. We check if we can kill some of its elastics.")
-              simulator.cellState.claimDeltasPerMachine(machineID).reverseIterator.takeWhile(_ => memToFree > 0).foreach(cd => {
-                memToFree -= (if (cd.job.get.id == job.id
-                  && cd.taskType == TaskType.Elastic) {
-                  val (c, e) = jobsClaimDeltasToKill.getOrElse(cd.job.get, (false, mutable.HashSet[ClaimDelta]()))
-                  jobsClaimDeltasToKill(cd.job.get) = (c, e + cd)
-                  cd.currentMem
-                }else 0)
-              })
-            }
+//            if(memToFree > 0 && claimDelta.taskType == TaskType.Core){
+//              simulator.logger.info(loggerPrefix + fclLoggerPrefix + claimDelta.job.get.loggerPrefix +
+//                " ClaimDelta was in OOMRisk and we could NOT free some resources for it. We check if we can kill some of its elastics.")
+//              simulator.cellState.claimDeltasPerMachine(machineID).reverseIterator.takeWhile(_ => memToFree > 0).foreach(cd => {
+//                memToFree -= (if (cd.job.get.id == job.id
+//                  && cd.taskType == TaskType.Elastic) {
+//                  val (c, e) = jobsClaimDeltasToKill.getOrElse(cd.job.get, (false, mutable.HashSet[ClaimDelta]()))
+//                  jobsClaimDeltasToKill(cd.job.get) = (c, e + cd)
+//                  cd.currentMem
+//                }else 0)
+//              })
+//            }
 
             if(memToFree > 0){
               if (claimDelta.taskType == TaskType.Core){
@@ -534,13 +527,147 @@ class ZoeDynamicScheduler (name: String,
     (cpuVariation, memVariation)
   }
 
+  def preventCrashes_base2Approach(machineIDsWithClaimDeltasOOMRisk: Array[Boolean]): (Long, Long) = {
+    var cpuVariation: Long = 0
+    var memVariation: Long = 0
+
+    var machineID: Int  = 0
+    while (machineID < simulator.cellState.numMachines){
+      if(machineIDsWithClaimDeltasOOMRisk(machineID)){
+        val jobsClaimDeltasToKill: mutable.HashMap[Job, (Boolean, mutable.HashSet[ClaimDelta])] = mutable.HashMap[Job, (Boolean, mutable.HashSet[ClaimDelta])]()
+
+        // Create a data structure for faster access to a job and its running claimDelta on that machine
+        val sortedJobs: mutable.TreeSet[Job] = mutable.TreeSet[Job]()(policy)
+        val jobsClaimDeltasRunningOnMachine = mutable.HashMap[Job, (mutable.HashSet[ClaimDelta], mutable.LinkedHashSet[ClaimDelta])]()
+        simulator.cellState.claimDeltasPerMachine(machineID).foreach(claimDelta => {
+          val job = claimDelta.job.get
+          sortedJobs.add(job)
+          val (cores, elastics) = jobsClaimDeltasRunningOnMachine.getOrElse(job, (mutable.HashSet[ClaimDelta](), mutable.LinkedHashSet[ClaimDelta]()))
+          if (claimDelta.taskType == TaskType.Core)
+            cores.add(claimDelta)
+          else if (claimDelta.taskType == TaskType.Elastic)
+            elastics.add(claimDelta)
+          jobsClaimDeltasRunningOnMachine(job) = (cores, elastics)
+        })
+
+        var memFree: Long = simulator.cellState.memPerMachine
+        sortedJobs.foreach(job => {
+          val (cores, elastics) = jobsClaimDeltasRunningOnMachine(job)
+          val (cpu, mem) = oracle.predictFutureResourceUtilization(job, simulator.currentTime)
+
+          var tmpMemFree = memFree
+          cores.foreach(cd => {
+            val (_, resizeMem) = cd.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
+            tmpMemFree -= resizeMem
+          })
+          if(tmpMemFree < 0){
+            jobsClaimDeltasToKill(job) = (true, mutable.HashSet[ClaimDelta]())
+            elastics.clear()
+          }else{
+            memFree = tmpMemFree
+          }
+
+          elastics.foreach(cd => {
+            val (_, resizeMem) = cd.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
+            tmpMemFree = memFree - resizeMem
+            if(tmpMemFree < 0){
+              val (c, e) = jobsClaimDeltasToKill.getOrElse(job, (false, mutable.HashSet[ClaimDelta]()))
+              jobsClaimDeltasToKill(job) = (c, e + cd)
+            }else{
+              memFree = tmpMemFree
+            }
+          })
+        })
+
+        jobsClaimDeltasToKill.foreach { case (job1, (coreDied, elastics1)) =>
+          if(coreDied){
+            killJob(job1)
+          } else if (elastics1.nonEmpty){
+            killElasticClaimDeltas(job1, elastics1)
+          }
+        }
+
+        simulator.cellState.claimDeltasPerMachine(machineID).iterator.foreach(cd => {
+          val job: Job = cd.job.get
+          val (cpu, mem) = oracle.predictFutureResourceUtilization(job, simulator.currentTime)
+          val (resizeCpus, resizeMem) = cd.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
+          val (slackCpu, slackMem): (Long, Long) = cd.resize(simulator.cellState, resizeCpus, resizeMem, resizePolicy = resizePolicy)
+          cpuVariation += slackCpu
+          memVariation += slackMem
+          assert(cd.status != ClaimDeltaStatus.OOMRisk, {
+            "How can the claimDelta be in OOMRisk(" + cd.memStillNeeded + ") if we just freed up the resources for it?"
+          })
+        })
+      }
+
+      machineID += 1
+    }
+
+    (cpuVariation, memVariation)
+  }
+
+  def preventCrashes_base3Approach(machineIDsWithClaimDeltasOOMRisk: Array[Boolean]): (Long, Long) = {
+    var cpuVariation: Long = 0
+    var memVariation: Long = 0
+
+    var machineID: Int  = 0
+    while (machineID < simulator.cellState.numMachines){
+      if(machineIDsWithClaimDeltasOOMRisk(machineID)){
+        val jobsClaimDeltasToKill: mutable.HashMap[Job, (Boolean, mutable.HashSet[ClaimDelta])] = mutable.HashMap[Job, (Boolean, mutable.HashSet[ClaimDelta])]()
+
+        var memFree: Long = simulator.cellState.memPerMachine
+        simulator.cellState.claimDeltasPerMachine(machineID).iterator.foreach(cd => {
+          val job: Job = cd.job.get
+          val (cpu, mem) = oracle.predictFutureResourceUtilization(job, simulator.currentTime)
+          val (_, resizeMem) = cd.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
+
+          val tmpMemFree: Long = memFree - resizeMem
+          if(tmpMemFree >= 0){
+            memFree = tmpMemFree
+          }else{
+            if(cd.taskType == TaskType.Elastic){
+              val (c, e) = jobsClaimDeltasToKill.getOrElse(job, (false, mutable.HashSet[ClaimDelta]()))
+              jobsClaimDeltasToKill(job) = (c, e + cd)
+            }else if(cd.taskType == TaskType.Core){
+              jobsClaimDeltasToKill(job) = (true, mutable.HashSet[ClaimDelta]())
+            }
+          }
+        })
+
+        jobsClaimDeltasToKill.foreach { case (job1, (coreDied, elastics1)) =>
+          if(coreDied){
+            killJob(job1)
+          } else if (elastics1.nonEmpty){
+            killElasticClaimDeltas(job1, elastics1)
+          }
+        }
+
+        simulator.cellState.claimDeltasPerMachine(machineID).iterator.foreach(cd => {
+          val job: Job = cd.job.get
+          val (cpu, mem) = oracle.predictFutureResourceUtilization(job, simulator.currentTime)
+          val (resizeCpus, resizeMem) = cd.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
+          val (slackCpu, slackMem): (Long, Long) = cd.resize(simulator.cellState, resizeCpus, resizeMem, resizePolicy = resizePolicy)
+          cpuVariation += slackCpu
+          memVariation += slackMem
+          assert(cd.status != ClaimDeltaStatus.OOMRisk, {
+            "How can the claimDelta be in OOMRisk(" + cd.memStillNeeded + ") if we just freed up the resources for it?"
+          })
+        })
+      }
+
+      machineID += 1
+    }
+
+    (cpuVariation, memVariation)
+  }
+
   def preventCrashes_naiveApproach(jobsClaimDeltasOOMRisk: mutable.HashMap[Job, mutable.HashSet[ClaimDelta]], takeWhile: Boolean = false): (Long, Long) = {
     var cpuVariation: Long = 0
     var memVariation: Long = 0
 
     val claimDeltasKilledToSaveOOMRisk: mutable.HashSet[ClaimDelta] = mutable.HashSet[ClaimDelta]()
     jobsClaimDeltasOOMRisk.foreach{case (job, elastics) =>
-      val (cpu, mem) = predictFutureResourceUtilization(job)
+      val (cpu, mem) = oracle.predictFutureResourceUtilization(job, simulator.currentTime)
       elastics.foreach(claimDelta => {
         if(!claimDeltasKilledToSaveOOMRisk.contains(claimDelta)){
           val (resizeCpus, resizeMem) = claimDelta.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
@@ -598,7 +725,7 @@ class ZoeDynamicScheduler (name: String,
 
     val claimDeltasKilledToSaveOOMRisk: mutable.HashSet[ClaimDelta] = mutable.HashSet[ClaimDelta]()
     jobsClaimDeltasOOMRisk.foreach{case (job, elastics) =>
-      val (cpu, mem) = predictFutureResourceUtilization(job)
+      val (cpu, mem) = oracle.predictFutureResourceUtilization(job, simulator.currentTime)
       elastics.foreach(claimDelta => {
         if(!claimDeltasKilledToSaveOOMRisk.contains(claimDelta)){
           val (resizeCpus, resizeMem) = claimDelta.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
@@ -649,90 +776,88 @@ class ZoeDynamicScheduler (name: String,
     (cpuVariation, memVariation)
   }
 
-  def preventCrashes_smarterApproach(machineIDsWithClaimDeltasOOMRisk: mutable.HashSet[Int]): (Long, Long) = {
+  def preventCrashes_smarterApproach(machineIDsWithClaimDeltasOOMRisk: Array[Boolean]): (Long, Long) = {
     var cpuVariation: Long = 0
     var memVariation: Long = 0
 
-    machineIDsWithClaimDeltasOOMRisk.foreach(machineID => {
-      // Create a data structure for faster access to a job and its running claimDelta on that machine
-      val jobs: mutable.HashSet[Job] = mutable.HashSet[Job]()
-      val jobsClaimDeltasRunningOnMachine = mutable.HashMap[Job, (mutable.HashSet[ClaimDelta], mutable.HashSet[ClaimDelta])]()
-      simulator.cellState.claimDeltasPerMachine(machineID).foreach(claimDelta => {
-        val job = claimDelta.job.get
-        jobs.add(job)
-        val (cores, elastics) = jobsClaimDeltasRunningOnMachine.getOrElse(job, (mutable.HashSet[ClaimDelta](), mutable.HashSet[ClaimDelta]()))
-        if(claimDelta.taskType == TaskType.Core)
-          cores.add(claimDelta)
-        else if (claimDelta.taskType == TaskType.Elastic)
-          elastics.add(claimDelta)
-        jobsClaimDeltasRunningOnMachine(job) = (cores, elastics)
-      })
+    var machineID: Int  = 0
+    while (machineID < simulator.cellState.numMachines){
+      if(machineIDsWithClaimDeltasOOMRisk(machineID)) {
+        // Create a data structure for faster access to a job and its running claimDelta on that machine
+        val sortedJobs: mutable.TreeSet[Job] = mutable.TreeSet[Job]()(policy)
+        val jobsClaimDeltasRunningOnMachine = mutable.HashMap[Job, (mutable.HashSet[ClaimDelta], mutable.LinkedHashSet[ClaimDelta])]()
+        simulator.cellState.claimDeltasPerMachine(machineID).foreach(claimDelta => {
+          val job = claimDelta.job.get
+          sortedJobs.add(job)
+          val (cores, elastics) = jobsClaimDeltasRunningOnMachine.getOrElse(job, (mutable.HashSet[ClaimDelta](), mutable.LinkedHashSet[ClaimDelta]()))
+          if (claimDelta.taskType == TaskType.Core)
+            cores.add(claimDelta)
+          else if (claimDelta.taskType == TaskType.Elastic)
+            elastics.add(claimDelta)
+          jobsClaimDeltasRunningOnMachine(job) = (cores, elastics)
+        })
 
-      simulator.logger.debug(loggerPrefix  + "[Machine: " + machineID + "] There are " +
-        simulator.cellState.claimDeltasPerMachine(machineID).count(_.status == ClaimDeltaStatus.OOMRisk) + " claimDeltas in OOMRisk over " +
-        simulator.cellState.claimDeltasPerMachine(machineID).size)
+        simulator.logger.debug(loggerPrefix + "[Machine: " + machineID + "] There are " +
+          simulator.cellState.claimDeltasPerMachine(machineID).count(_.status == ClaimDeltaStatus.OOMRisk) + " claimDeltas in OOMRisk over " +
+          simulator.cellState.claimDeltasPerMachine(machineID).size)
 
-      // Sorted List of the jobs running on a machine. The sort is done per policy
-      // FIXME!
-      val sortedJobsRunningOnMachine: ListBuffer[Job] = ListBuffer[Job]() //Policy.Modes.getJobs(jobs, policyMode, simulator.currentTime)
+        var memoryFree: Long = simulator.cellState.memPerMachine
+        var currentMemoryFree: Long = memoryFree
 
-      var memoryFree: Long = simulator.cellState.memPerMachine
-      var currentMemoryFree: Long = memoryFree
-
-      val jobsClaimDeltasToKeep: ListBuffer[(Job, mutable.HashSet[ClaimDelta], mutable.HashSet[ClaimDelta])] =
-        new ListBuffer[(Job, mutable.HashSet[ClaimDelta], mutable.HashSet[ClaimDelta])]()
-      val tmpJobsClaimDeltasToKeep: ListBuffer[(Job, mutable.HashSet[ClaimDelta], mutable.HashSet[ClaimDelta])] =
-        new ListBuffer[(Job, mutable.HashSet[ClaimDelta], mutable.HashSet[ClaimDelta])]()
-      var stop: Boolean = false
-      sortedJobsRunningOnMachine.foreach( job => {
-        var claimDelta_core =  mutable.HashSet[ClaimDelta]()
-        val (cpu, mem) = predictFutureResourceUtilization(job)
-        if (!stop) {
+        val jobsClaimDeltasToKeep: ListBuffer[(Job, mutable.HashSet[ClaimDelta], mutable.HashSet[ClaimDelta])] =
+          new ListBuffer[(Job, mutable.HashSet[ClaimDelta], mutable.HashSet[ClaimDelta])]()
+        val tmpJobsClaimDeltasToKeep: ListBuffer[(Job, mutable.HashSet[ClaimDelta], mutable.HashSet[ClaimDelta])] =
+          new ListBuffer[(Job, mutable.HashSet[ClaimDelta], mutable.HashSet[ClaimDelta])]()
+        var stop: Boolean = false
+        sortedJobs.iterator.takeWhile(_ => !stop).foreach(job => {
           // Create a copy
           tmpJobsClaimDeltasToKeep.clear()
           jobsClaimDeltasToKeep.foreach { case (job1, cores1, elastics1) =>
             tmpJobsClaimDeltasToKeep += ((job1, mutable.HashSet[ClaimDelta]() ++ cores1, mutable.HashSet[ClaimDelta]() ++ elastics1))
           }
 
+
           // START ALGORITHM PRESENTED IN THE PAPER
           // Remove all elastic components from the machine
           jobsClaimDeltasToKeep.foreach { case (job1, _, elastics1) =>
-            val (cpu1, mem1) = predictFutureResourceUtilization(job1)
-            elastics1.foreach(cd => {
-              val (_, resizeMem) = cd.calculateNextAllocations(cpu1, mem1, resizePolicy = resizePolicy)
+            elastics1.foreach( cd => {
+              val (cpu, mem) = oracle.predictFutureResourceUtilization(job1, simulator.currentTime)
+              val (_, resizeMem) = cd.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
               currentMemoryFree += resizeMem
             })
             elastics1.clear()
           }
           assert(currentMemoryFree <= simulator.cellState.memPerMachine)
 
-          val (cores, _) = jobsClaimDeltasRunningOnMachine(job)
+          var claimDelta_core = mutable.HashSet[ClaimDelta]()
           var tmpMemory = currentMemoryFree
+          val (cpu, mem) = oracle.predictFutureResourceUtilization(job, simulator.currentTime)
+          val (cores, _) = jobsClaimDeltasRunningOnMachine(job)
           cores.foreach(cd => {
             val (_, resizeMem) = cd.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
             tmpMemory -= resizeMem
           })
-          if(tmpMemory >= 0){
-            currentMemoryFree = tmpMemory
-            claimDelta_core ++= cores
-          }
           // We check if we managed to put back all the core, otherwise we already know that the job will die
           //     therefore no point in wasting resources with elastic components
-          if(cores.size == claimDelta_core.size)
+          // By checking if the free memory is >= 0, we also consider the case where no core components are allocated
+          //     on that machine
+          if (tmpMemory >= 0) {
+            currentMemoryFree = tmpMemory
+            claimDelta_core ++= cores
+            assert(claimDelta_core.size == job.coreTasks)
             jobsClaimDeltasToKeep += ((job, claimDelta_core, mutable.HashSet[ClaimDelta]()))
+          }
 
-          jobsClaimDeltasToKeep.foreach { case (job1, _, elastics1) =>
-            if(currentMemoryFree > 0){
-              val (cpu1, mem1) = predictFutureResourceUtilization(job1)
-              val (_, elastics) = jobsClaimDeltasRunningOnMachine(job1)
-              elastics.foreach(cd => {
-                val (_, resizeMem) = cd.calculateNextAllocations(cpu1, mem1, resizePolicy = resizePolicy)
-                if (currentMemoryFree >= resizeMem){
-                  currentMemoryFree -= resizeMem
-                  elastics1 += cd
-                }
-              })
-            }
+          jobsClaimDeltasToKeep.iterator.takeWhile(_ => currentMemoryFree > 0).foreach { case (job1, _, elastics1) =>
+            val (cpu1, mem1) = oracle.predictFutureResourceUtilization(job1, simulator.currentTime)
+            val (_, elastics) = jobsClaimDeltasRunningOnMachine(job1)
+            elastics.iterator.takeWhile(_ => currentMemoryFree > 0).foreach(cd => {
+              val (_, resizeMem) = cd.calculateNextAllocations(cpu1, mem1, resizePolicy = resizePolicy)
+              if (currentMemoryFree >= resizeMem) {
+                currentMemoryFree -= resizeMem
+                elastics1 += cd
+              }
+            })
           }
           if (currentMemoryFree > memoryFree) {
             stop = true
@@ -741,60 +866,149 @@ class ZoeDynamicScheduler (name: String,
           }
           memoryFree = currentMemoryFree
           // FINISH ALGORITHM PRESENTED IN THE PAPER
-        }
-      })
-      simulator.logger.debug(loggerPrefix  + "[Machine: " + machineID + "] After simulation we have " +
-        jobsClaimDeltasToKeep.foldLeft(0)((b, a) => b + a._2.size + a._3.size) + " claimDeltas")
-
-      // Time to kill the claimDelta that are not in the jobsClaimDeltasToKeep
-      jobsClaimDeltasToKeep.foreach { case (job, cores, elastics) =>
-        val (originalCores, originalElastics) = jobsClaimDeltasRunningOnMachine.remove(job).get
-        if ((originalCores -- cores).nonEmpty){
-          killJob(job)
-          originalElastics.clear()
-        }
-        val elasticsToRemove = originalElastics -- elastics
-        if (elasticsToRemove.nonEmpty){
-          killElasticClaimDeltas(job, elasticsToRemove)
-        }
-      }
-      jobsClaimDeltasRunningOnMachine.foreach { case (job, (cores, elastics)) =>
-        if(cores.nonEmpty){
-          killJob(job)
-          elastics.clear()
-        }
-        if(elastics.nonEmpty)
-          killElasticClaimDeltas(job, elastics)
-      }
-
-      // Now we can resize the claimDeltas so that they exist the status of OOMRisk
-      jobsClaimDeltasToKeep.foreach { case (job, cores, elastics) =>
-        cores.foreach(cd => {
-          val (slackCpu, slackMem) = resizeClaimDelta(job, cd)
-          cpuVariation += slackCpu
-          memVariation += slackMem
         })
-        elastics.foreach(cd => {
-          val (slackCpu, slackMem) = resizeClaimDelta(job, cd)
-          cpuVariation += slackCpu
-          memVariation += slackMem
-        })
-      }
+        simulator.logger.debug(loggerPrefix + "[Machine: " + machineID + "] After simulation we have " +
+          jobsClaimDeltasToKeep.foldLeft(0)((b, a) => b + a._2.size + a._3.size) + " claimDeltas")
 
-      def resizeClaimDelta(job: Job, claimDelta: ClaimDelta): (Long, Long) = {
-        val (cpu, mem) = predictFutureResourceUtilization(job)
-        val (resizeCpus, resizeMem) = claimDelta.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
-        val (slackCpu, slackMem) = claimDelta.resize(simulator.cellState, resizeCpus, resizeMem, resizePolicy = resizePolicy)
-        assert(claimDelta.status != ClaimDeltaStatus.OOMRisk, {
-          "How can the claimDelta be in OOMRisk(" + claimDelta.memStillNeeded + ") if we just freed up the resources for it?"
-        })
-        (slackCpu, slackMem)
-      }
+        // Time to kill the claimDelta that are no longer allocated for a job
+        jobsClaimDeltasToKeep.foreach { case (job, cores, elastics) =>
+          val (originalCores, originalElastics) = jobsClaimDeltasRunningOnMachine.remove(job).get
+          // We check if the new allocation for the job has less core components than the original
+          //     this means that a core component was not allocated, therefore we kill the application
+          if (originalCores.size > cores.size) {
+            killJob(job)
+            originalElastics.clear()
+          }
+          if(originalElastics.nonEmpty)
+            killElasticClaimDeltas(job, mutable.HashSet[ClaimDelta]() ++ (originalElastics -- elastics))
+        }
+        // Time to kill the jobs that are no longer allocated
+        jobsClaimDeltasRunningOnMachine.foreach { case (job, (cores, elastics)) =>
+          if (cores.nonEmpty) {
+            killJob(job)
+            elastics.clear()
+          }
+          if (elastics.nonEmpty)
+            killElasticClaimDeltas(job, mutable.HashSet[ClaimDelta]() ++ elastics)
+        }
 
-    })
+        // Now we can resize the claimDeltas so that they exit the status of OOMRisk
+        jobsClaimDeltasToKeep.foreach { case (job, cores, elastics) =>
+          cores.foreach(cd => {
+            val (slackCpu, slackMem) = resizeClaimDelta(job, cd)
+            cpuVariation += slackCpu
+            memVariation += slackMem
+          })
+          elastics.foreach(cd => {
+            val (slackCpu, slackMem) = resizeClaimDelta(job, cd)
+            cpuVariation += slackCpu
+            memVariation += slackMem
+          })
+        }
+
+        def resizeClaimDelta(job: Job, claimDelta: ClaimDelta): (Long, Long) = {
+          val (cpu, mem) = oracle.predictFutureResourceUtilization(job, simulator.currentTime)
+          val (resizeCpus, resizeMem) = claimDelta.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
+          val (slackCpu, slackMem) = claimDelta.resize(simulator.cellState, resizeCpus, resizeMem, resizePolicy = resizePolicy)
+          assert(claimDelta.status != ClaimDeltaStatus.OOMRisk, {
+            "How can the claimDelta be in OOMRisk(" + claimDelta.memStillNeeded + ") if we just freed up the resources for it?"
+          })
+          (slackCpu, slackMem)
+        }
+      }
+    machineID += 1
+    }
 
     (cpuVariation, memVariation)
   }
 
+}
 
+class Oracle(window: Int, interval: Int, introduceError: Boolean = false) extends LazyLogging{
+  val mu: Double = 0
+  val sigma: Double = 0.125
+  val errorDistribution: LogNormalDistribution = new LogNormalDistribution(
+    new Well19937c(0), mu, sigma, LogNormalDistribution.DEFAULT_INVERSE_ABSOLUTE_ACCURACY)
+
+  // We use this structure to cache the errors so that we get the same error if we call the function
+  //     multiple time at the same event time
+  val errorsCache: mutable.HashMap[Long, (Double, Double)] = mutable.HashMap[Long, (Double, Double)]()
+  // We use this structure to cache the resource prediction so that we get the same one if we call the function
+  //     multiple time at the same event time
+  val predictionCache: mutable.HashMap[Long, (Double, (Long, Long))] = mutable.HashMap[Long, (Double, (Long, Long))]()
+
+  def getError(jobID: Long, currentTime: Double): Double = {
+    def generateError(factor: Double = 1): Double = {
+      val ret = factor * errorDistribution.sample()
+      logger.info("" + ret)
+      ret
+    }
+
+    if(introduceError){
+      // We look for a cached error value, otherwise we get a new one
+      var (time, _error) = errorsCache.getOrElse(jobID, (currentTime, -1.0))
+      if(time != currentTime || _error == -1.0)
+        _error = generateError()
+      errorsCache(jobID) = (currentTime, _error)
+      _error
+    }else
+      1.0
+  }
+
+  def predictFutureResourceUtilization(job: Job, currentTime: Double): (Long, Long) = {
+    def max(job: Job): (Long, Long) = {
+      var cpus: Long = 0
+      var mem: Long = 0
+
+      val jobFinishTime = currentTime + job.remainingTime
+      val windowTime = currentTime + (interval * window)
+      // We check if the oracle prediction is not going to be outside the job execution time
+      val finalTime = if(jobFinishTime < windowTime) jobFinishTime else windowTime
+
+      var time = currentTime
+      while(time <= finalTime){
+        var v = job.cpuUtilization(time)
+        if(v > cpus)
+          cpus = v
+        v = job.memoryUtilization(time)
+        if(v > mem)
+          mem = v
+
+        time += interval
+      }
+
+      (cpus, mem)
+    }
+
+    if(job.disableResize)
+      return (job.cpusPerTask, job.memPerTask)
+
+    val jobID = job.id
+
+    // We look for a cached prediction value, otherwise we get a new one
+    var (time, (cpus, mem)) = predictionCache.getOrElse(jobID, (currentTime, (-1L, -1L)))
+    if(time != currentTime || cpus == -1L || mem == -1L){
+      val (_cpus, _mem) = max(job)
+      cpus = _cpus
+      mem = _mem
+    }
+    predictionCache(jobID) = (currentTime, (cpus, mem))
+
+    val error: Double = getError(jobID, currentTime)
+    if(error != 1.0){
+      // In case the prediction goes above the original reservation, we adjust it
+      cpus = (cpus * error).toLong
+      if(cpus > job.cpusPerTask)
+        cpus = job.cpusPerTask
+      mem = (mem * error).toLong
+      if(mem > job.memPerTask)
+        mem = job.memPerTask
+    }
+
+    (cpus, mem)
+  }
+}
+
+object Oracle {
+  def apply(window: Int, interval: Int, introduceError: Boolean): Oracle = new Oracle(window, interval, introduceError)
 }

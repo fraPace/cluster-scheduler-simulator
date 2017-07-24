@@ -129,9 +129,9 @@ class ClaimDelta(val id: Long,
 
   def checkResourcesLimits(cpus: Long, mem: Long): ClaimDeltaStatus.Value = {
     if (currentCpus < cpus) {
-      scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
-        " This claimDelta on machine " + machineID + " is using more CPUs than allocated. Originally Requested: " +
-        requestedCpus + " Allocated: " + currentCpus + " Current: " + cpus)
+//      scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
+//        " This claimDelta on machine " + machineID + " is using more CPUs than allocated. Originally Requested: " +
+//        requestedCpus + " Allocated: " + currentCpus + " Current: " + cpus)
       status = ClaimDeltaStatus.CPUKilled
     }
 
@@ -194,7 +194,7 @@ class ClaimDelta(val id: Long,
         cellState.assignResources(scheduler, machineID, deltaCpus, 0L, locked)
       }
       else {
-        scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
+        scheduler.simulator.logger.debug(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
           " This claimDelta on machine " + machineID + " may crash because there are not enough CPUs to allocate. Originally Requested: " +
           requestedCpus + " Allocated: "+ currentCpus + " Current Requested: " + cpus + " Slack: " + deltaCpus)
         status = ClaimDeltaStatus.CPURisk
@@ -215,7 +215,7 @@ class ClaimDelta(val id: Long,
         cellState.assignResources(scheduler, machineID, 0, deltaMem, locked)
       }
       else {
-        scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
+        scheduler.simulator.logger.debug(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
           " This claimDelta on machine " + machineID + " may crash because there are not enough memory to allocate. Originally Requested: " +
           requestedMem + " Allocated: "+ currentMem + " Current Requested: " + mem + " Slack: " + deltaMem)
         status = ClaimDeltaStatus.OOMRisk
@@ -332,6 +332,7 @@ abstract class Scheduler(val name: String,
   }
 
   // Add a job to this scheduler's job queue.
+  var positionInQueue: Long = 0
   def addJob(job: Job): Unit = {
     checkRegistered()
 
@@ -347,6 +348,9 @@ abstract class Scheduler(val name: String,
     perWorkloadWastedTimeScheduling(job.workloadName) =
       perWorkloadWastedTimeScheduling.getOrElse(job.workloadName, 0.0)
     job.lastEnqueued = simulator.currentTime
+    job.initialQueuePosition = positionInQueue
+
+    positionInQueue += 1
   }
 
   def checkRegistered(): Unit = {

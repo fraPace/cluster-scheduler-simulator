@@ -44,11 +44,11 @@ object Workloads {
   val scaleFactor = 1
   val introduceError = false
 
-  val workloadSize = 100
+  val workloadSize = 1000
 
   val globalNumMachines: Int = 1 * scaleFactor
   val globalCpusPerMachine: Long = 32 * 1000L // value must be in millicores
-  val globalMemPerMachine: Long = 128 * Constant.GiB //value must be in bytes
+  val globalMemPerMachine: Long = 64 * Constant.GiB //value must be in bytes
 
   val globalMaxCoresPerJob = 20.0 // only used in NewSpark
   //  val globalMaxCpusPerTask = 2
@@ -169,31 +169,31 @@ object Workloads {
 
 //  val fakeWorkloadGenerator = new FakeZoeWorkloadGenerator("Batch")
   //  val fakeWorkloadGenerator = new FakePreemptiveZoeWorkloadGenerator("Batch")
-  val fakeWorkloadGenerator = new FakeZoeDynamicWorkloadGenerator("Batch")
+//  val fakeWorkloadGenerator = new FakeZoeDynamicWorkloadGenerator("Batch")
+//
+//  val eurecomCellTraceAllWorkloadPrefillDesc =
+//    WorkloadDesc(
+//      cell = "Eurecom",
+//      assignmentPolicy = "CMB_PBB",
+//      workloadGenerators =
+//        fakeWorkloadGenerator ::
+//          Nil,
+//      cellStateDesc = new CellStateDesc(1,
+//        globalCpusPerMachine,
+//        128 * Constant.GiB)
+//    )
 
   val eurecomCellTraceAllWorkloadPrefillDesc =
     WorkloadDesc(
       cell = "Eurecom",
       assignmentPolicy = "CMB_PBB",
       workloadGenerators =
-        fakeWorkloadGenerator ::
+        workloadGeneratorTraceAllBatch ::
+        workloadGeneratorTraceAllService ::
+          //          workloadGeneratorTraceAllInteractive ::
           Nil,
-      cellStateDesc = new CellStateDesc(1,
-        globalCpusPerMachine,
-        128 * Constant.GiB)
+      cellStateDesc = eurecomCellStateDesc
     )
-
-//  val eurecomCellTraceAllWorkloadPrefillDesc =
-//    WorkloadDesc(
-//      cell = "Eurecom",
-//      assignmentPolicy = "CMB_PBB",
-//      workloadGenerators =
-//        workloadGeneratorTraceAllBatch ::
-//          workloadGeneratorTraceAllService ::
-//          //          workloadGeneratorTraceAllInteractive ::
-//          Nil,
-//      cellStateDesc = eurecomCellStateDesc
-//    )
 
   //  val eurecomCellTraceAllWorkloadPrefillDesc =
   //    WorkloadDesc(

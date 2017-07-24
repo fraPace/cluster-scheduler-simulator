@@ -439,17 +439,27 @@ class ZoeScheduler(name: String,
             assert(job.addElasticClaimDeltas(commitResult.committedDeltas) == elasticTasksLaunched)
             numSuccessfulTaskTransactions += commitResult.committedDeltas.size
 
-            simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Scheduled " + elasticTasksLaunched + " tasks, " + job.elasticTasksUnscheduled + " remaining.")
+            simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " Scheduled " + elasticTasksLaunched + " elastic tasks.")
           } else {
-            simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " There was a conflict when committing the task allocation to the real cell.")
+            simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " There was a conflict when committing the elastic task allocation to the real cell.")
           }
         } else if (job.elasticTasks > 0) {
-          simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " No tasks scheduled (" + job.cpusPerTask + " cpu " + job.memPerTask +
-            " mem per task) during this scheduling attempt. " + job.elasticTasksUnscheduled + " unscheduled tasks remaining.")
+          simulator.logger.info(loggerPrefix + elasticPrefix + job.loggerPrefix + " No elastic tasks scheduled during this scheduling attempt.")
         }
+
         if (elasticTasksLaunched > 0) {
           updateJobFinishingEvents(job, newElasticsAllocated = elasticTasksLaunched)
         }
+
+        simulator.logger.info(
+          if (job.elasticTasksUnscheduled != 0) {
+            loggerPrefix + elasticPrefix + job.loggerPrefix + " Remaining " + job.elasticTasksUnscheduled + " elastic tasks to schedule (" +
+              job.cpusPerTask + " cpu " + job.memPerTask + " mem per task)."
+          } else {
+            loggerPrefix + elasticPrefix + job.loggerPrefix + " All elastic tasks scheduled (" + job.cpusPerTask + " cpu " + job.memPerTask +
+              " mem per task)."
+          }
+        )
       }
 
       // If all the tasks (both core and elastics) are allocated, we remove it from the pending queue
@@ -588,7 +598,7 @@ object Policy {
 
     def jobPriority(job: Job): Double = job.priority.toDouble
 
-    def arrivalTime(job: Job): Double = job.submitted * job.sizeAdjustment
+    def arrivalTime(job: Job): Double = job.initialQueuePosition.toDouble
 
     def jobDuration(job: Job): Double = job.jobDuration * job.sizeAdjustment * job.error
 

@@ -81,6 +81,18 @@ case class Job(id: Long,
 //    "memPerTask for job " + id + " is " + memPerTask
 //  })
 
+  // This will set the position in the queue when we first add it.
+  // Useful to understand which job has priority in a FIFO like queue when 2 jobs have the same submitted time
+  private[this] var _initialQueuePosition: Long = -1
+  def initialQueuePosition: Long = _initialQueuePosition
+  def initialQueuePosition_=(value: Long): Unit = {
+    assert(_initialQueuePosition == -1, {
+      "We already set the value for the initial position in the queue. We cannot change it"
+    })
+    _initialQueuePosition = value
+  }
+
+
   val sizeAdjustment: Double = {
     if (workloadName.equals("Interactive"))
       0.001
@@ -165,7 +177,7 @@ case class Job(id: Long,
       value.foreach(v => assert(v <= cpusPerTask, {
         "CPU Utilization (" + v + ") is higher than allocated (" + cpusPerTask + ")."
       }))
-      assert(value.length == jobDuration, {
+      assert(value.length == jobDuration.toInt, {
         "The number of points must be equal to the job duration."
       })
       _cpuUtilization = value
@@ -191,28 +203,22 @@ case class Job(id: Long,
     }
   }
 
-  def cpuUtilization(currtime: Double): Long = {
-    if(currtime < _jobStartedWorking || _cpuUtilization.isEmpty)
+  def cpuUtilization(time: Double): Long = {
+    if(time < _jobStartedWorking || time - _jobStartedWorking > remainingTime || _cpuUtilization.isEmpty)
       return 0
 
-    var index = ((currtime - _jobStartedWorking) % _memoryUtilization.length).toInt - 1
-    if(index < 0)
-      index = 0
-    val r = (_cpuUtilization(index) * cpusPerTask).toLong
+    val r = (_cpuUtilization(((time - _jobStartedWorking) % _memoryUtilization.length).toInt) * cpusPerTask).toLong
     if(r > cpusPerTask)
       cpusPerTask
     else
       r
   }
 
-  def memoryUtilization(currtime: Double): Long = {
-    if(currtime < _jobStartedWorking || _memoryUtilization.isEmpty)
+  def memoryUtilization(time: Double): Long = {
+    if(time < _jobStartedWorking || time - _jobStartedWorking > jobDurationCoreOnly || _memoryUtilization.isEmpty)
       return 0
 
-    var index = ((currtime - _jobStartedWorking) % _memoryUtilization.length).toInt - 1
-    if(index < 0)
-      index = 0
-    val r = (_memoryUtilization(index) * memPerTask).toLong
+    val r = (_memoryUtilization(((time - _jobStartedWorking) % _memoryUtilization.length).toInt) * memPerTask).toLong
     if(r > memPerTask)
       memPerTask
     else
@@ -797,7 +803,7 @@ object DistCache extends LazyLogging {
     } else {
       val below = empDistribution(math.floor(rawIndex).toInt)
       val above = empDistribution(math.ceil(rawIndex).toInt)
-      below + interpAmount * (below + above)
+      below + interpAmount * (above - below)
     }
   }
 
@@ -874,7 +880,7 @@ object DistCache extends LazyLogging {
     for (i <- 0 to 1000) {
       // Store summary quantiles.
       // 99.9 %tile = length * .999
-      val index = ((dataPointsArray.length - 1) * i / 1000.0).toInt
+      val index = ((dataPointsArray.length - 1).toLong * i / 1000.0).toInt
       val currPercentile =
         dataPointsArray(index)
       refDistribution(i) = currPercentile
