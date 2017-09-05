@@ -129,7 +129,7 @@ class ZoeDynamicScheduler (name: String,
   override val enableCellStateSnapshot: Boolean = false
   val reclaimResourcesPeriod: Int = 1
   val crashedAllowed = 1
-  val oracle: Oracle = Oracle(window = 1, interval = reclaimResourcesPeriod, introduceError = false)
+  val oracle: Oracle = Oracle(window = 1, introduceError = false)
 
   override def addJob(job: Job): Unit = {
 //    val maxMemNeeded: Long = job.memoryUtilization.max
@@ -159,7 +159,7 @@ class ZoeDynamicScheduler (name: String,
 
     if (job.numJobCrashes >= crashedAllowed){
       job.disableResize = true
-      simulator.logger.warn(loggerPrefix + job.loggerPrefix + " This job crashed more than " + crashedAllowed + " times (" + job.numJobCrashes + "). Disabling resize.")
+      simulator.logger.info(loggerPrefix + job.loggerPrefix + " This job crashed more than " + crashedAllowed + " times (" + job.numJobCrashes + "). Disabling resize.")
     }
 
     killJob(job)
@@ -562,21 +562,19 @@ class ZoeDynamicScheduler (name: String,
           })
           if(tmpMemFree < 0){
             jobsClaimDeltasToKill(job) = (true, mutable.HashSet[ClaimDelta]())
-            elastics.clear()
           }else{
             memFree = tmpMemFree
+            elastics.foreach(cd => {
+              val (_, resizeMem) = cd.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
+              tmpMemFree = memFree - resizeMem
+              if(tmpMemFree < 0){
+                val (c, e) = jobsClaimDeltasToKill.getOrElse(job, (false, mutable.HashSet[ClaimDelta]()))
+                jobsClaimDeltasToKill(job) = (c, e + cd)
+              }else{
+                memFree = tmpMemFree
+              }
+            })
           }
-
-          elastics.foreach(cd => {
-            val (_, resizeMem) = cd.calculateNextAllocations(cpu, mem, resizePolicy = resizePolicy)
-            tmpMemFree = memFree - resizeMem
-            if(tmpMemFree < 0){
-              val (c, e) = jobsClaimDeltasToKill.getOrElse(job, (false, mutable.HashSet[ClaimDelta]()))
-              jobsClaimDeltasToKill(job) = (c, e + cd)
-            }else{
-              memFree = tmpMemFree
-            }
-          })
         })
 
         jobsClaimDeltasToKill.foreach { case (job1, (coreDied, elastics1)) =>
@@ -844,7 +842,6 @@ class ZoeDynamicScheduler (name: String,
           if (tmpMemory >= 0) {
             currentMemoryFree = tmpMemory
             claimDelta_core ++= cores
-            assert(claimDelta_core.size == job.coreTasks)
             jobsClaimDeltasToKeep += ((job, claimDelta_core, mutable.HashSet[ClaimDelta]()))
           }
 
@@ -924,28 +921,26 @@ class ZoeDynamicScheduler (name: String,
 
 }
 
-class Oracle(window: Int, interval: Int, introduceError: Boolean = false) extends LazyLogging{
+class Oracle(window: Int, introduceError: Boolean = false) extends LazyLogging{
   val mu: Double = 0
   val sigma: Double = 0.125
   val errorDistribution: LogNormalDistribution = new LogNormalDistribution(
     new Well19937c(0), mu, sigma, LogNormalDistribution.DEFAULT_INVERSE_ABSOLUTE_ACCURACY)
 
-  // We use this structure to cache the errors so that we get the same error if we call the function
-  //     multiple time at the same event time
+  // We use these structure to cache the information so that we get the same one if we call the functions
+  //     multiple times at the same event time
   val errorsCache: mutable.HashMap[Long, (Double, Double)] = mutable.HashMap[Long, (Double, Double)]()
-  // We use this structure to cache the resource prediction so that we get the same one if we call the function
-  //     multiple time at the same event time
   val predictionCache: mutable.HashMap[Long, (Double, (Long, Long))] = mutable.HashMap[Long, (Double, (Long, Long))]()
 
   def getError(jobID: Long, currentTime: Double): Double = {
     def generateError(factor: Double = 1): Double = {
       val ret = factor * errorDistribution.sample()
-      logger.info("" + ret)
+//      logger.info("" + ret)
       ret
     }
 
     if(introduceError){
-      // We look for a cached error value, otherwise we get a new one
+      // We look for a cached value, otherwise we get a new one
       var (time, _error) = errorsCache.getOrElse(jobID, (currentTime, -1.0))
       if(time != currentTime || _error == -1.0)
         _error = generateError()
@@ -955,13 +950,15 @@ class Oracle(window: Int, interval: Int, introduceError: Boolean = false) extend
       1.0
   }
 
+
+
   def predictFutureResourceUtilization(job: Job, currentTime: Double): (Long, Long) = {
     def max(job: Job): (Long, Long) = {
       var cpus: Long = 0
       var mem: Long = 0
 
       val jobFinishTime = currentTime + job.remainingTime
-      val windowTime = currentTime + (interval * window)
+      val windowTime = currentTime + window
       // We check if the oracle prediction is not going to be outside the job execution time
       val finalTime = if(jobFinishTime < windowTime) jobFinishTime else windowTime
 
@@ -974,7 +971,7 @@ class Oracle(window: Int, interval: Int, introduceError: Boolean = false) extend
         if(v > mem)
           mem = v
 
-        time += interval
+        time += 1
       }
 
       (cpus, mem)
@@ -996,19 +993,13 @@ class Oracle(window: Int, interval: Int, introduceError: Boolean = false) extend
 
     val error: Double = getError(jobID, currentTime)
     if(error != 1.0){
-      // In case the prediction goes above the original reservation, we adjust it
       cpus = (cpus * error).toLong
-      if(cpus > job.cpusPerTask)
-        cpus = job.cpusPerTask
       mem = (mem * error).toLong
-      if(mem > job.memPerTask)
-        mem = job.memPerTask
     }
-
     (cpus, mem)
   }
 }
 
 object Oracle {
-  def apply(window: Int, interval: Int, introduceError: Boolean): Oracle = new Oracle(window, interval, introduceError)
+  def apply(window: Int, introduceError: Boolean): Oracle = new Oracle(window, introduceError)
 }

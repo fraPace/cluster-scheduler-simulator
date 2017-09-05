@@ -44,18 +44,22 @@ from utils import *
 
 import matplotlib.pyplot as plt
 
-
 if sys.version_info >= (3, 5):
     from importlib import util as import_util
+
     spec = import_util.spec_from_file_location("cluster_simulation_protos_pb2", "../cluster_simulation_protos_pb2.py")
     cluster_simulation_protos_pb2 = import_util.module_from_spec(spec)
     spec.loader.exec_module(cluster_simulation_protos_pb2)
 elif sys.version_info >= (3, 3):
     from importlib.machinery import SourceFileLoader
-    cluster_simulation_protos_pb2 = SourceFileLoader("cluster_simulation_protos_pb2", "../cluster_simulation_protos_pb2.py").load_module()
+
+    cluster_simulation_protos_pb2 = SourceFileLoader("cluster_simulation_protos_pb2",
+                                                     "../cluster_simulation_protos_pb2.py").load_module()
 elif sys.version_info >= (2, 0):
     import imp
-    cluster_simulation_protos_pb2 = imp.load_source('cluster_simulation_protos_pb2', '../cluster_simulation_protos_pb2.py')
+
+    cluster_simulation_protos_pb2 = imp.load_source('cluster_simulation_protos_pb2',
+                                                    '../cluster_simulation_protos_pb2.py')
 
 # logging.basicConfig(level=logging.DEBUG)
 logging.basicConfig(level=logging.INFO)
@@ -146,6 +150,7 @@ def getNewColor(old):
     return {"color": new_color, "line_color": new_color, "bar_color": new_color,
             "marker": bw_map[new_color]["marker"], "dash": bw_map[new_color]["dash"], "markerSize": 5,
             "markeredgewidth": 2, 'hatch': ""}
+
 
 prefilled_colors_web = {'Eurecom': 'b', '10xEurecom': 'r', '5xEurecom': 'c', "SYNTH": 'y'}
 colors_web = {'Eurecom': 'b', '10xEurecom': 'r', '5xEurecom': 'm', "SYNTH": 'y'}
@@ -321,8 +326,10 @@ label_translation = {
     "PSJF3D": "SJF3D",
     "hPSJF3D": "hSJF3D",
     "ePSJF3D": "eSJF3D",
-}
 
+    "allocation": "",
+    "utilization": "",
+}
 
 if paper_mode:
     linestyles = linestyles_paper
@@ -408,7 +415,6 @@ running_queue_status = {}
 
 workload_job_scheduled_slowdown = {}
 
-
 moving_average_exp_weight = 5
 
 
@@ -416,7 +422,8 @@ def moving_average_exp(interval, weight):
     N = int(weight)
     weights = np.exp(np.linspace(-1., 0., N))
     weights /= weights.sum()
-    return np.convolve(weights, interval)[N-1:-N+1]
+    return np.convolve(weights, interval)[N - 1:-N + 1]
+
 
 average_interval = 3600
 average_threshold = average_interval * 24 * 10
@@ -424,7 +431,7 @@ average_threshold = average_interval * 24 * 10
 
 def average(arr, n):
     arr = np.array(arr)
-    end = n * int(len(arr)/n)
+    end = n * int(len(arr) / n)
     return np.mean(arr[:end].reshape(-1, n), 1)
 
 
@@ -541,7 +548,8 @@ for filename in input_list:
 
     # Loop through each experiment environment.
     experiment_name = experiment_result_set.experiment_name
-    logging.info("Processing {} experiment envs with name {}".format(len(experiment_result_set.experiment_env), experiment_name))
+    logging.info(
+        "Processing {} experiment envs with name {}".format(len(experiment_result_set.experiment_env), experiment_name))
 
     policy = ""
     pre = False
@@ -559,6 +567,7 @@ for filename in input_list:
 
         # Within this environment, loop through each experiment result
         logging.debug("Processing %d experiment results." % len(env.experiment_result))
+
 
         # We're going to sort the experiment_results in case the experiments
         # in a series were run out of order.
@@ -1651,7 +1660,8 @@ def plot_boxplot(data_set_1d_dict,
 
     if x_axis_type != "":
         vary_dim = x_axis_type
-    setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, labels, y_vals_set=y_vals_set, v_dim=vary_dim)
+    setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, labels, y_vals_set=y_vals_set,
+                        v_dim=vary_dim)
     # except Exception as e:
     #     logging.warn(e)
 
@@ -1669,11 +1679,26 @@ def plot_boxplot_2d(data_set_2d_dict,
     # try:
     plt.clf()
     ax = fig.add_subplot(111)
-    position = 1
     labels = []
     avg = {}
     y_vals_set = sets.Set()
+    position = 1
+    offset = 1
+    custom_legend = False
+    legend_obj = []
+    legend_labels = []
+    leg = None
     for exp_env, name_to_job_map in data_set_2d_dict.iteritems():
+        if exp_env == "utilization" or exp_env == "allocation":
+            offset = 2
+            custom_legend = True
+
+        if exp_env == "utilization":
+            hatch = "/"
+            position = 2
+        else:
+            hatch = ""
+
         for wl_or_sched_name in sort_keys(name_to_job_map):
             values = name_to_job_map[wl_or_sched_name]
             wl_or_sched_name_split = wl_or_sched_name.split("-")
@@ -1695,11 +1720,13 @@ def plot_boxplot_2d(data_set_2d_dict,
                 x_vals = average(x_vals, average_interval)
 
             if exp_env in label_translation:
-                exp_env = label_translation[exp_env]
+                _exp_env = label_translation[exp_env]
             if wl_or_sched_name in label_translation:
                 wl_or_sched_name = label_translation[wl_or_sched_name]
-            # labels.append(exp_env)
-            labels.append(wl_or_sched_name + "-" + exp_env)
+            label = wl_or_sched_name
+            if len(_exp_env) != 0:
+                label += "-" + _exp_env
+            labels.insert(position - 1, label)
 
             color = 'gray'
             wl_or_sched_name = wl_or_sched_name.encode('ascii', 'ignore')
@@ -1726,12 +1753,26 @@ def plot_boxplot_2d(data_set_2d_dict,
                     # box.set( color='#7570b3', linewidth=2)
                     # change fill color
                     box.set(facecolor=color)
-                    # box.set(hatch=hatch)
-            position += 1
+                    box.set(hatch=hatch)
+                    if custom_legend and exp_env not in legend_labels:
+                        br = plt.bar(0, 1, 1, color=color, hatch=hatch, label=exp_env)
+                        legend_obj.append(br)
+                        legend_labels.append(exp_env)
+            position += offset
+
+    if len(legend_obj) != 0:
+        leg = plt.legend(tuple(legend_obj), tuple([v.title() for v in legend_labels]), bbox_to_anchor=(1.045, 1.05), labelspacing=0, ncol=2)
+        fr = leg.get_frame()
+        fr.set_linewidth(0)
+        fr.set_alpha(0)
+        for obj in legend_obj:
+            for patch in obj.patches:
+                patch.set_visible(False)
 
     if x_axis_type != "":
         vary_dim = x_axis_type
-    setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, labels, y_vals_set=y_vals_set, v_dim=vary_dim)
+    setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, labels, y_vals_set=y_vals_set,
+                        v_dim=vary_dim, custom_legend=leg)
     # except Exception as e:
     #     logging.warn(e)
 
@@ -1760,27 +1801,34 @@ def plot_boxplot_2d(data_set_2d_dict,
     # setup_graph_details(ax, plot_title, filename_suffix + "-mean", y_label, y_axis_type, labels, v_dim=vary_dim)
 
 
-def setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, x_vals_set, y_vals_set=[],  v_dim="", x_label=""):
+def setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, x_vals_set, y_vals_set=[], v_dim="",
+                        x_label="", custom_legend=None):
     assert (y_axis_type == "0-to-1" or
             y_axis_type == "ms-to-day" or
             y_axis_type == "abs")
 
+    leg = None
+    if custom_legend is None:
+        if not paper_mode:
+            # leg = plt.legend(loc='upper right', bbox_to_anchor=(1.02, -0.1000), labelspacing=0, ncol=3)
+            leg = plt.legend(loc='upper right', ncol=3)
+        else:
+            try:
+                # Set up the legend, for removing the border if in paper mode.
+                logging.debug("sorting legend")
+                handles, labels = ax.get_legend_handles_labels()
+                handles2, labels2 = sort_labels(handles, labels)
+                leg = plt.legend(handles2, labels2, loc=2, labelspacing=0, ncol=2)
+                fr = leg.get_frame()
+                fr.set_linewidth(0)
+            except:
+                logging.error("Failed to remove frame around legend, legend probably is empty.")
+    else:
+        leg = custom_legend
+
     # Paper title.
     if not paper_mode:
         plt.title(plot_title)
-        leg = plt.legend(loc='upper right', bbox_to_anchor=(1.02, -0.1000), labelspacing=0, ncol=3)
-
-    if paper_mode:
-        try:
-            # Set up the legend, for removing the border if in paper mode.
-            logging.debug("sorting legend")
-            handles, labels = ax.get_legend_handles_labels()
-            handles2, labels2 = sort_labels(handles, labels)
-            leg = plt.legend(handles2, labels2, loc=2, labelspacing=0, ncol=2)
-            fr = leg.get_frame()
-            fr.set_linewidth(0)
-        except:
-            logging.error("Failed to remove frame around legend, legend probably is empty.")
 
     # Axis labels.
     if not paper_mode:
@@ -1850,7 +1898,7 @@ def setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, x
             while i <= len(x_ticks) - step:
                 # ticks.append((x_ticks[i] + x_ticks[i + 1]) / 2.0)
                 # i += 2
-                ticks.append(sum(x_ticks[i:i+step]) / float(step))
+                ticks.append(sum(x_ticks[i:i + step]) / float(step))
                 # ticks.append((x_ticks[i] + x_ticks[i + 1] + x_ticks[i + 2]) / 3.0)
                 i += step
             x_ticks = ticks
@@ -1890,7 +1938,10 @@ def setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, x
     final_filename = os.path.join(output_prefix,
                                   '{}-{}'.format(v_dim, filename_suffix) if v_dim != "" else filename_suffix)
     logging.debug("Writing plot to %s", final_filename)
-    writeout(final_filename, output_formats)
+    if leg is None:
+        writeout(final_filename, output_formats)
+    else:
+        writeout(final_filename, output_formats, bbox_extra_artists=(leg,))
 
 
 if vary_dim == "c" or vary_dim == "l":
@@ -1903,6 +1954,7 @@ def generate_json(filename, dataset):
     import json
     with open(os.path.join(output_prefix, filename + '.json'), 'w') as fp:
         json.dump(dataset, fp)
+
 
 workload_job_scheduled_turnaround_ratio_preemption = {}
 for workload_name, workload_to_policy_map in workload_job_scheduled_turnaround.iteritems():
@@ -2263,7 +2315,7 @@ plot_boxplot(resource_allocation_cpu_wasted,
 #
 # Cell MEM allocation Time Series
 plot_1d_data_set_dict(resource_allocation_mem,
-                      "Cluster memory allocation",
+                      "Cluster Memory allocation",
                       "percent-cell-mem-allocation",
                       u'% memory allocation in cell',
                       "0-to-1",
@@ -2321,7 +2373,6 @@ plot_boxplot(resource_utilization_cpu_wasted,
              u'% CPU',
              "0-to-1",
              "boxplot")
-
 
 # Cell MEM Utilization Time Series
 plot_1d_data_set_dict(resource_utilization_mem,
@@ -2388,3 +2439,18 @@ plot_boxplot(running_queue_status,
 # logging.info("#     Execution Times per Job Id")
 # generate_json('execution-times-per-job-id',
 #               workload_job_scheduled_execution_time_per_job_id)
+
+
+# AGGREGATE Plots
+plot_boxplot_2d({"allocation": resource_allocation_mem, "utilization": resource_utilization_mem},
+                "Cluster Memory",
+                "percent-cell-mem",
+                u'% memory',
+                "0-to-1",
+                "boxplot")
+plot_boxplot_2d({"allocation": resource_allocation_cpu, "utilization": resource_utilization_cpu},
+                "Cluster CPU",
+                "percent-cell-cpu",
+                u'% CPU',
+                "0-to-1",
+                "boxplot")

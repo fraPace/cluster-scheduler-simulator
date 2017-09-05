@@ -431,7 +431,7 @@ class ExperimentRun(
     var totalJobs: Long = 0
     var totalTimeouts: Long = 0
     var totalSchedulingAttempts: Long = 0
-    var totalJobCrashed: Long = 0
+    var totalJobDisabledResize: Long = 0
     var totalJobCrashedAtLeastOnce: Long = 0
     var totalTasksKilled: Long = 0
     var totalTasksCrashed: Long = 0
@@ -483,7 +483,7 @@ class ExperimentRun(
       var workloadTotalJobTurnaroudTime: Double = 0.0
       var workloadCountJobFinished: Long = 0
       var workloadTotalJobNotScheduled: Long = 0
-      var jobCrashed: Long = 0
+      var jobDisabledResize: Long = 0
       var jobCrashedAtLeastOnce: Long = 0
       var workloadTotalTasksCrashed: Long = 0
       var workloadTotalTasksKilled: Long = 0
@@ -526,8 +526,8 @@ class ExperimentRun(
 
         if(job.numJobCrashes > 0)
           jobCrashedAtLeastOnce += 1
-        if(job.isCrashed)
-          jobCrashed += 1
+        if(job.disableResize)
+          jobDisabledResize += 1
 
         baseWorkloadStats.addJobStats(jobStats)
       })
@@ -536,7 +536,7 @@ class ExperimentRun(
       workloadStats.setAvgJobTurnaroundTime(workloadTotalJobTurnaroudTime / workloadCountJobFinished.toDouble)
       workloadStats.setAvgJobQueueTimesTillFirstScheduled(workloadTotalJobQueueTime / workload.getJobs.size.toDouble)
       workloadStats.setAvgJobRampUpTime(workloadTotalJobRampUpTime / workload.getJobs.size.toDouble)
-      totalJobCrashed += jobCrashed
+      totalJobDisabledResize += jobDisabledResize
       totalJobCrashedAtLeastOnce += jobCrashedAtLeastOnce
       totalTasksCrashed += workloadTotalTasksCrashed
       totalTasksKilled += workloadTotalTasksKilled
@@ -544,8 +544,8 @@ class ExperimentRun(
       // Output to logger
       logger.info("[" + name + "][Stats][" + workload.name + "] Avg Turnaround: %.2f".format(workloadStats.getAvgJobTurnaroundTime) + " | Avg Execution: " + workloadStats.getAvgJobExecutionTime +
         " | Avg Queue: " + workloadStats.getAvgJobQueueTimesTillFirstScheduled + " | Avg RampUp: " + workloadStats.getAvgJobRampUpTime + " | Scheduled(Not): " + workloadStats.getNumJobsScheduled +
-        "(" + workloadTotalJobNotScheduled + ") Finished: " + workloadCountJobFinished + " Crashed(AtLeastOnce): " + jobCrashed + "(" + jobCrashedAtLeastOnce + ") Total: " + workloadStats.getNumJobs +
-        "| Timeouts: " + workloadStats.getNumJobsTimedOutScheduling + " | Scheduling Attempts: " + schedulingAttempts +
+        "(" + workloadTotalJobNotScheduled + ") Finished: " + workloadCountJobFinished + " Crashed AtLeastOnce: " + jobCrashedAtLeastOnce + " JobsResizeDisabled: " + jobDisabledResize +
+        " Total: " + workloadStats.getNumJobs + "| Timeouts: " + workloadStats.getNumJobsTimedOutScheduling + " | Scheduling Attempts: " + schedulingAttempts +
         " | Tasks Killed: " + workloadTotalTasksKilled + " Crashed: " + workloadTotalTasksCrashed)
       totalJobTurnaroundTime += workloadTotalJobTurnaroudTime
       totalJobExecutionTime += workloadTotalJobExecutionTime
@@ -701,8 +701,8 @@ class ExperimentRun(
     logger.info("[" + name + "][Stats][Utilization] Avg CPU(Wasted): %.2f".format(experimentResult.getCellStateAvgCpuUtilization) + "(%.2f)".format(simulator.avgCpuUtilizationWasted) +
       " | Avg Mem(Wasted): %.2f".format(experimentResult.getCellStateAvgMemUtilization) + "(%.2f)".format(simulator.avgMemUtilizationWasted))
     logger.info("[" + name + "][Stats][Dynamic] CPU Conflicts: " + totalCpuUtilizationConflicts + " | Mem Conflicts: " + totalMemoryUtilizationConflicts +
-      " | Jobs Crashed: " + totalJobCrashed + " (" + (totalJobCrashed / totalJobScheduled.toDouble * 100) + "%)" +
-      " | Job Crashed At Least Once: " + totalJobCrashedAtLeastOnce + " (%.2f%%)".format(totalJobCrashedAtLeastOnce / totalJobScheduled.toDouble * 100)  +
+      " | JobsDisabledResize: " + totalJobDisabledResize + " (" + (totalJobDisabledResize / totalJobScheduled.toDouble * 100) + "%)" +
+      " | Jobs Crashed At Least Once: " + totalJobCrashedAtLeastOnce + " (%.2f%%)".format(totalJobCrashedAtLeastOnce / totalJobScheduled.toDouble * 100)  +
       " | Tasks Total Scheduled: " + totalTasksScheduled + " Killed: " + totalTasksKilled + " Crashed: " + totalTasksCrashed)
 
 

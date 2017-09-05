@@ -30,23 +30,38 @@ object ClaimDelta {
     def exists(resizePolicy: ResizePolicy): Boolean = values.exists(_.equals(resizePolicy))
     def valuesToString(): String = {values.toString()}
 
-    def calculate(values: StatisticsArray, value: Long, resizePolicy: ResizePolicy): Double = {
+    def calculate(values: StatisticsArray, value: Long, resizePolicy: ResizePolicy): Long = {
       resizePolicy match {
         case ClaimDelta.ResizePolicy.Instant =>
           value
 
         case ClaimDelta.ResizePolicy.Average =>
-          values.getMean(value)
+          Math.ceil(values.getMean(value)).toLong
 
         case ClaimDelta.ResizePolicy.Maximum =>
           values.getMax(value)
 
         case ClaimDelta.ResizePolicy.MovingAverage =>
-          values.getMeanWindow(value)
+          Math.ceil(values.getMeanWindow(value)).toLong
 
         case ClaimDelta.ResizePolicy.MovingMaximum =>
           values.getMaxWindow(value)
       }
+    }
+
+    val safeGuardCache: mutable.HashMap[Long, (Double, Double)] = mutable.HashMap[Long, (Double, Double)]()
+    def getSafeGuardValue(jobID: Long, currentTime: Double): Double = {
+      def generateSafeGuard(): Double = {
+        SafeMargin
+      }
+
+      // We look for a cached value, otherwise we get a new one
+      var (time, _safeGuard) = safeGuardCache.getOrElse(jobID, (currentTime, -1.0))
+      if(time != currentTime || _safeGuard == -1.0)
+        _safeGuard = Math.abs(generateSafeGuard())
+      assert(_safeGuard >= 0 && _safeGuard <= 1.0)
+      safeGuardCache(jobID) = (currentTime, _safeGuard)
+      _safeGuard
     }
   }
 
@@ -145,9 +160,13 @@ class ClaimDelta(val id: Long,
   }
 
   def calculateNextAllocations(cpus: Long, mem: Long, resizePolicy: ResizePolicy): (Long, Long) = {
+    val job: Job = this.job.get
+    val safeGuard = ClaimDelta.ResizePolicy.getSafeGuardValue(job.id, scheduler.simulator.currentTime)
+
     var deltaCpus: Long =
       if(resizePolicy != ClaimDelta.ResizePolicy.None)
-        (ClaimDelta.ResizePolicy.calculate(cpusUtilization, cpus, resizePolicy) * (1 + ClaimDelta.ResizePolicy.SafeMargin)).toLong - currentCpus
+//        (ClaimDelta.ResizePolicy.calculate(cpusUtilization, cpus, resizePolicy) * (1 + safeGuard)).toLong - currentCpus
+        (ClaimDelta.ResizePolicy.calculate(cpusUtilization, cpus, resizePolicy) + (requestedCpus * safeGuard)).toLong - currentCpus
       else 0
     if (deltaCpus > 0) {
       deltaCpus += (deltaCpus * ClaimDelta.ResizePolicy.IncreaseRatio).toLong
@@ -161,7 +180,8 @@ class ClaimDelta(val id: Long,
 
     var deltaMem =
       if(resizePolicy != ClaimDelta.ResizePolicy.None)
-        (ClaimDelta.ResizePolicy.calculate(memUtilization, mem, resizePolicy) * (1 + ClaimDelta.ResizePolicy.SafeMargin)).toLong - currentMem
+//        (ClaimDelta.ResizePolicy.calculate(memUtilization, mem, resizePolicy) * (1 + safeGuard)).toLong - currentMem
+        (ClaimDelta.ResizePolicy.calculate(memUtilization, mem, resizePolicy) + (requestedMem * safeGuard)).toLong - currentMem
       else 0
     if (deltaMem > 0) {
       deltaMem += (deltaMem * ClaimDelta.ResizePolicy.IncreaseRatio).toLong

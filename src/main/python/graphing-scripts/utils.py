@@ -45,10 +45,10 @@ def mkdir_p(path):
 
 
 # plot saving utility function
-def writeout(filename_base, formats=['pdf']):
+def writeout(filename_base, formats=['pdf'], bbox_extra_artists=()):
     mkdir_p(os.path.dirname(filename_base))
     for fmt in formats:
-        plt.savefig("%s.%s" % (filename_base, fmt), format=fmt, bbox_inches='tight')
+        plt.savefig("%s.%s" % (filename_base, fmt), format=fmt, bbox_extra_artists=bbox_extra_artists, bbox_inches='tight')
 
 
 # plt.savefig("%s.%s" % (filename_base, fmt), format=fmt)

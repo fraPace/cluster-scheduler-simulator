@@ -72,6 +72,8 @@ class TraceAllZoeWLGenerator(val workloadName: String,
     assert(timeWindow >= 0)
     assert(maxCpus.isEmpty)
     assert(maxMem.isEmpty)
+
+    val _timeWindow = timeWindow * 0.1
     // Reset the randomNumberGenerator using the global seed so that
     // the same workload will be generated each time newWorkload is
     // called with the same parameters. This will ensure that
@@ -85,32 +87,27 @@ class TraceAllZoeWLGenerator(val workloadName: String,
     var numJobs = 0
     // We will fill the workload with the number of job asked
     while (numJobs < jobsPerWorkload) {
-      if (nextJobSubmissionTime < timeWindow) {
-        var moldableTasks: Option[Int] = Some(randomNumberGenerator.nextInt(5))
-        //        if(workloadName.equals("Interactive"))
-        //          moldableTasks = randomNumberGenerator.nextInt(3)
-        if (allCore)
-          moldableTasks = None
-        for (_ <- 1 to scaleFactor) {
-          val job = newJob(nextJobSubmissionTime, moldableTasks, timeWindow)
-          assert(job.workloadName == workload.name)
-          workload.addJob(job)
-        }
-        numJobs += 1
+      while(nextJobSubmissionTime >= _timeWindow){
+        logger.warn("[" + workloadName + "] job submission going outside the time window. Resetting it.")
+        nextJobSubmissionTime = DistCache.getQuantile(interarrivalDist, randomNumberGenerator.nextFloat)
       }
+      var moldableTasks: Option[Int] = Some(randomNumberGenerator.nextInt(5))
+      //        if(workloadName.equals("Interactive"))
+      //          moldableTasks = randomNumberGenerator.nextInt(3)
+      if (allCore)
+        moldableTasks = None
+      for (_ <- 1 to scaleFactor) {
+        val job = newJob(nextJobSubmissionTime, moldableTasks, _timeWindow)
+        assert(job.workloadName == workload.name)
+        workload.addJob(job)
+      }
+      numJobs += scaleFactor
       // For this type of WorkloadGenerator in which interarrival rate is
       // sampled from an empirical distribution, the
       // updatedAvgJobInterarrivalTime parameter represents a scaling factor
       // for the value sampled from the distribution.
-      val newinterArrivalTime = updatedAvgJobInterarrivalTime.getOrElse(1.0) *
+      nextJobSubmissionTime += updatedAvgJobInterarrivalTime.getOrElse(1.0) *
         DistCache.getQuantile(interarrivalDist, randomNumberGenerator.nextFloat) * 100
-      if (newinterArrivalTime + nextJobSubmissionTime < timeWindow * 0.1)
-        nextJobSubmissionTime += newinterArrivalTime
-      else {
-        logger.warn("[" + workloadName + "] job submission going outside the time window. Resetting it.")
-        nextJobSubmissionTime = DistCache.getQuantile(interarrivalDist, randomNumberGenerator.nextFloat)
-      }
-
     }
     //    assert(numJobs == workload.numJobs, "Num Jobs generated differs from what has been asked")
     workload.sortJobs()
@@ -125,7 +122,7 @@ class TraceAllZoeWLGenerator(val workloadName: String,
   def newJob(submissionTime: Double, numMoldableTasks: Option[Int], timeWindow: Double): Job = {
     // Don't allow jobs with duration 0.
     var dur = 0.0
-    while (dur <= 0.0 || dur >= timeWindow * 0.1) {
+    while (dur <= 0.0 || dur >= timeWindow) {
       dur = DistCache.getQuantile(jobDurationDist, randomNumberGenerator.nextFloat)
       if (!workloadName.equals("Interactive"))
         dur *= 30
@@ -153,7 +150,7 @@ class TraceAllZoeWLGenerator(val workloadName: String,
     }
 
 
-    logger.debug("New Job with " + cpusPerTask + " cpusPerTask and " + memPerTask + " memPerTask")
+    logger.debug("New Job with " + cpusPerTask + " cpusPerTask and " + memPerTask + " memPerTask and lasting " + dur + " seconds")
     val newJob: Job = Job(UniqueIDGenerator.generateUniqueID,
       submissionTime, numTasks, dur, workloadName, cpusPerTask, memPerTask,
       numCoreTasks = numMoldableTasks, priority = randomNumberGenerator.nextInt(1000),
@@ -213,7 +210,8 @@ class TraceAllZoeWLGenerator(val workloadName: String,
     var mean = breeze.stats.mean(resourceUtilization)
     val _targetMean = Math.round(targetMean.toFloat * 1000)
     var steps = 0
-    while(Math.abs(_targetMean - Math.round(mean * 1000)) > 1){
+    val maxSteps = 10000
+    while(Math.abs(_targetMean - Math.round(mean * 1000)) > 1 && steps < maxSteps){
       val meanRatio = targetMean / mean
       i = 0
       while(i < resourceUtilization.length){
@@ -222,13 +220,16 @@ class TraceAllZoeWLGenerator(val workloadName: String,
         i += 1
       }
       // We prevent infinity loops by exiting if we could not improve the mean at this step
-      var tmp_mean = breeze.stats.mean(resourceUtilization)
-      if(tmp_mean == mean){
-        logger.warn("Curve cannot converge to desired mean. Target Mean: " + targetMean + " Current Mean: " + mean)
-        tmp_mean = targetMean.toFloat
-      }
+      val tmp_mean = breeze.stats.mean(resourceUtilization)
+      if(tmp_mean == mean)
+        steps = maxSteps
       mean = tmp_mean
       steps += 1
+    }
+
+    if(Math.abs(_targetMean - Math.round(mean * 1000)) > 1){
+      logger.warn("Curve cannot converge to desired mean, trying with a new one. Target Mean: " + targetMean + " Current Mean: " + mean)
+      resourceUtilization = generateResourceUtilization(targetMean, length)
     }
 
     resourceUtilization
