@@ -56,3 +56,6 @@ libraryDependencies += "org.scalanlp" %% "breeze-natives" % "0.13.1"
 libraryDependencies += "org.scalanlp" %% "breeze-viz" % "0.13.1"
 
 resolvers += "Sonatype Releases" at "https://oss.sonatype.org/content/repositories/releases/"
+
+// https://mvnrepository.com/artifact/org.jblas/jblas
+libraryDependencies += "org.jblas" % "jblas" % "1.2.4"

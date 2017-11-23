@@ -79,6 +79,7 @@ START_TIME=$(date +%s)
 original_project_dir="${project_dir}"
 cp -r ${project_dir} ${HOME}
 project_dir="${HOME}/${project_name}"
+echo "# Copied project in ${project_dir}"
 
 run_simulation
 ret=$?

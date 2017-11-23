@@ -512,6 +512,8 @@ class ExperimentRun(
           ExperimentEnv.BaseWorkloadStats.
           JobStats.newBuilder()
 
+        jobStats.setId(job.id)
+        jobStats.setArrivalTime(job.submitted)
         jobStats.setTurnaround(jobTurnaround)
         jobStats.setQueueTime(job.timeInQueueTillFirstScheduled)
         jobStats.setRampUpTime(job.timeInQueueTillFullyScheduled - job.timeInQueueTillFirstScheduled)
@@ -704,6 +706,10 @@ class ExperimentRun(
       " | JobsDisabledResize: " + totalJobDisabledResize + " (" + (totalJobDisabledResize / totalJobScheduled.toDouble * 100) + "%)" +
       " | Jobs Crashed At Least Once: " + totalJobCrashedAtLeastOnce + " (%.2f%%)".format(totalJobCrashedAtLeastOnce / totalJobScheduled.toDouble * 100)  +
       " | Tasks Total Scheduled: " + totalTasksScheduled + " Killed: " + totalTasksKilled + " Crashed: " + totalTasksCrashed)
+    simulator.schedulers.values.foreach(scheduler => {
+      scheduler.printExtraStats("[" + name + "]")
+    })
+
 
 
     experimentResult.build()

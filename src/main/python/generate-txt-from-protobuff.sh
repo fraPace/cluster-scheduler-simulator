@@ -25,6 +25,8 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 curr_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd ${curr_dir}
+pushd ${curr_dir}
 
 PYTHONPATH=${PYTHONPATH}:.. python ./generate-txt-from-protobuff.py $@
+
+popd

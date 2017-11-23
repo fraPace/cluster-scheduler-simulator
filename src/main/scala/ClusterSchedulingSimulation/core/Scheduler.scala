@@ -22,7 +22,7 @@ object ClaimDelta {
     @inline final val DecreaseRatio: Double = 1
     // Value greater than 0 will add more resources than used above the safe margin
     @inline final val IncreaseRatio: Double = 0
-    @inline final val SafeMargin: Double = 0
+    @inline final val SafeMargin: Double = 0.1
 
     type ResizePolicy = Value
     val Instant, Average, Maximum, MovingAverage, MovingMaximum, None = Value
@@ -55,13 +55,15 @@ object ClaimDelta {
         SafeMargin
       }
 
-      // We look for a cached value, otherwise we get a new one
-      var (time, _safeGuard) = safeGuardCache.getOrElse(jobID, (currentTime, -1.0))
-      if(time != currentTime || _safeGuard == -1.0)
-        _safeGuard = Math.abs(generateSafeGuard())
-      assert(_safeGuard >= 0 && _safeGuard <= 1.0)
-      safeGuardCache(jobID) = (currentTime, _safeGuard)
-      _safeGuard
+//      // We look for a cached value, otherwise we get a new one
+//      var (time, _safeGuard) = safeGuardCache.getOrElse(jobID, (currentTime, -1.0))
+//      if(time != currentTime || _safeGuard == -1.0)
+//        _safeGuard = Math.abs(generateSafeGuard())
+//      assert(_safeGuard >= 0 && _safeGuard <= 1.0)
+//      safeGuardCache(jobID) = (currentTime, _safeGuard)
+//      _safeGuard
+
+      generateSafeGuard()
     }
   }
 
@@ -151,9 +153,9 @@ class ClaimDelta(val id: Long,
     }
 
     if (currentMem < mem) {
-      scheduler.simulator.logger.info(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
-        " This claimDelta on machine " + machineID + " is using more memory than allocated. Originally Requested: " +
-        requestedMem + " Allocated: " + currentMem + " Current: " + mem)
+//      scheduler.simulator.logger.warn(scheduler.loggerPrefix + job.get.loggerPrefix + loggerPrefix +
+//        " This claimDelta on machine " + machineID + " is using more memory than allocated. Originally Requested: " +
+//        requestedMem + " Allocated: " + currentMem + " Current: " + mem + " (" + (Math.abs(1 - (currentMem / mem.toDouble)) * 100) + " %)")
       status = ClaimDeltaStatus.OOMKilled
     }
     status
@@ -345,6 +347,8 @@ abstract class Scheduler(val name: String,
   override def toString: String = name
 
   def loggerPrefix: String = "[%.2f".format(simulator.currentTime) + "][" + name + "]"
+
+  def printExtraStats(prefix: String): Unit = {}
 
   def wakeUp(): Unit = {
     //FIXME: Fix this hack thing to force the user to override this method

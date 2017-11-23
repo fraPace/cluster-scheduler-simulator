@@ -79,7 +79,12 @@ class TraceAllZoeWLGenerator(val workloadName: String,
     // called with the same parameters. This will ensure that
     // Experiments run in different threads will get the same
     // workloads and be a bit more fair to compare to each other.
-    randomNumberGenerator.setSeed(Seed())
+    if(workloadName == "Batch")
+      randomNumberGenerator.setSeed(Seed() + 10)
+    else if (workloadName == "Batch-MPI")
+      randomNumberGenerator.setSeed(Seed() + 100)
+    else
+      randomNumberGenerator.setSeed(Seed())
     val workload = new Workload(workloadName)
     // create a new list of jobs for the experiment runTime window
     // using the current WorkloadGenerator.

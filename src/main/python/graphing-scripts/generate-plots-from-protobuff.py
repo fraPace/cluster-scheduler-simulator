@@ -39,7 +39,7 @@ import math
 import numpy as np
 import sets
 import sys
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from utils import *
 
 import matplotlib.pyplot as plt
@@ -311,12 +311,17 @@ dashes_paper = {'Monolithic': (None, None),
                 }
 
 label_translation = {
-    "Batch": "B-E",
-    "Batch-MPI": "B-R",
+    # "Batch": "B-E",
+    # "Batch-MPI": "B-R",
+    "Batch": "E",
+    "Batch-MPI": "R",
     "Interactive": "Int",
 
+    "hFifo": "FIFO",
+
     "PSJF": "SJF",
-    "hPSJF": "hSJF",
+    # "hPSJF": "hSJF",
+    "hPSJF": "SJF",
     "ePSJF": "eSJF",
 
     "PSJF2D": "SJF2D",
@@ -330,6 +335,8 @@ label_translation = {
     "allocation": "",
     "utilization": "",
 }
+
+blacklist = ["hPSJF"]
 
 if paper_mode:
     linestyles = linestyles_paper
@@ -1630,7 +1637,8 @@ def plot_boxplot(data_set_1d_dict,
         if len(x_vals) >= average_threshold:
             x_vals = average(x_vals, average_interval)
 
-        color = 'gray'
+        # color = 'gray'
+        color = 'w'
         label = label.encode('ascii', 'ignore')
         if label.startswith('h'):
             color = 'w'
@@ -1688,19 +1696,38 @@ def plot_boxplot_2d(data_set_2d_dict,
     legend_obj = []
     legend_labels = []
     leg = None
-    for exp_env, name_to_job_map in data_set_2d_dict.iteritems():
-        if exp_env == "utilization" or exp_env == "allocation":
-            offset = 2
+    for __exp_env, name_to_job_map in data_set_2d_dict.iteritems():
+        memory_or_cpu = ""
+        color = "w"
+        hatch = ""
+        if "utilization" in __exp_env or "allocation" in __exp_env:
+            # offset = 2
             custom_legend = True
 
-        if exp_env == "utilization":
-            hatch = "/"
-            position = 2
-        else:
-            hatch = ""
+            _exp_env = __exp_env.split("-")
+            exp_env = _exp_env[0]
+            if len(_exp_env) == 2:
+                memory_or_cpu = _exp_env[1]
+            elif len(_exp_env) > 2:
+                logging.warn("Wrong tag used...sorry.")
 
+            if exp_env == "utilization":
+                # hatch = "/"
+                # position = 2
+                color = "gray"
+        else:
+            exp_env = __exp_env
+
+        _exp_env = ""
         for wl_or_sched_name in sort_keys(name_to_job_map):
+            if any(wl_or_sched_name == s for s in blacklist):
+                continue
+
             values = name_to_job_map[wl_or_sched_name]
+
+            if memory_or_cpu != "":
+                wl_or_sched_name = memory_or_cpu
+
             wl_or_sched_name_split = wl_or_sched_name.split("-")
             preemptive = False
             if len(wl_or_sched_name_split) > 1 and wl_or_sched_name_split[1] == "Pre":
@@ -1728,14 +1755,14 @@ def plot_boxplot_2d(data_set_2d_dict,
                 label += "-" + _exp_env
             labels.insert(position - 1, label)
 
-            color = 'gray'
-            wl_or_sched_name = wl_or_sched_name.encode('ascii', 'ignore')
-            if wl_or_sched_name.startswith('h'):
-                color = 'w'
-            if wl_or_sched_name.startswith('e'):
-                color = 'r'
-            if preemptive:
-                color = 'gray'
+            # color = 'gray'
+            # wl_or_sched_name = wl_or_sched_name.encode('ascii', 'ignore')
+            # if wl_or_sched_name.startswith('h'):
+            #     color = 'w'
+            # if wl_or_sched_name.startswith('e'):
+            #     color = 'r'
+            # if preemptive:
+            #     color = 'gray'
 
             x_mav = moving_average_exp(x_vals, moving_average_exp_weight)
             # x_mav = x_vals
@@ -1845,6 +1872,7 @@ def setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, x
     ax.set_xscale('log')
     ax.set_autoscalex_on(False)
     ax.grid(True)
+    ax.tick_params(axis='x', which='major', pad=10)
     if v_dim == 'c':
         plt.xlim(xmin=0.01)
         plt.xticks((0.01, 0.1, 1, 10, 100), ('10ms', '0.1s', '1s', '10s', '100s'))
@@ -1906,7 +1934,7 @@ def setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, x
         if len(x_ticks) > 0:
             x_lim = [0, math.ceil(max(x_ticks)) + step - 1]
             # plt.xticks(x_ticks, labels)
-            plt.xticks(x_ticks, labels, rotation=85)
+            plt.xticks(x_ticks, labels)#, rotation=85)
             plt.xlim(x_lim)
     elif len(x_vals_set) != 0 and max(x_vals_set) - min(x_vals_set) < 20:
         ax.set_xscale('linear')
@@ -2177,11 +2205,11 @@ for workload_name, workload_to_policy_map in workload_job_scheduled_turnaround.i
 #                   u'Runtime (s)',
 #                   "0-to-1")
 # #
-plot_distribution(workload_job_arrival_time,
-                  "Application Arrival Time distribution",
-                  "job-arrival-distribution",
-                  u'Time (s)',
-                  "0-to-1")
+# plot_distribution(workload_job_arrival_time,
+#                   "Application Arrival Time distribution",
+#                   "job-arrival-distribution",
+#                   u'Time (s)',
+#                   "0-to-1")
 # #
 # plot_distribution(workload_job_inter_arrival_time,
 #                   "Inter-Arrival Time",
@@ -2234,20 +2262,20 @@ plot_boxplot_2d(workload_job_scheduled_queue_time,
 #                      "job-slowdown-time-distribution",
 #                      u'Runtime (s)',
 #                      "0-to-1")
-
+#
 plot_boxplot_2d(workload_job_scheduled_slowdown,
                 "Application Slowdown",
                 "job-slowdown-time-distribution",
                 u'Ratio',
                 "abs",
                 "boxplot")
-if len(workload_job_scheduled_turnaround_ratio_preemption) > 0:
-    plot_boxplot_2d(workload_job_scheduled_turnaround_ratio_preemption,
-                    "Turnaround Ratio",
-                    "job-turnaround-ratio-distribution",
-                    u'Without/With preemption',
-                    "abs",
-                    "boxplot")
+# if len(workload_job_scheduled_turnaround_ratio_preemption) > 0:
+#     plot_boxplot_2d(workload_job_scheduled_turnaround_ratio_preemption,
+#                     "Turnaround Ratio",
+#                     "job-turnaround-ratio-distribution",
+#                     u'Without/With preemption',
+#                     "abs",
+#                     "boxplot")
 
 # for workload_name in workload_job_scheduled_turnaround:
 #     plot_distribution(workload_job_scheduled_turnaround[workload_name],
@@ -2290,43 +2318,43 @@ if len(workload_job_scheduled_turnaround_ratio_preemption) > 0:
 #                       "0-to-1",
 #                       "timeseries")
 
-plot_boxplot(resource_allocation_cpu,
-             "Cluster CPU allocation",
-             "percent-cell-cpu-allocation",
-             u'% CPU',
-             "0-to-1",
-             "boxplot")
+# plot_boxplot(resource_allocation_cpu,
+#              "Cluster CPU allocation",
+#              "percent-cell-cpu-allocation",
+#              u'% CPU',
+#              "0-to-1",
+#              "boxplot")
+#
+# # CELL CPU allocation wasted Time Series
+# # plot_1d_data_set_dict(resource_allocation_cpu_wasted,
+# #                       "Cluster CPU allocation wasted",
+# #                       "percent-cell-cpu-allocation-wasted",
+# #                       u'% CPU allocation in cell',
+# #                       "0-to-1",
+# #                       "timeseries")
+#
+# plot_boxplot(resource_allocation_cpu_wasted,
+#              "Cluster CPU allocation wasted",
+#              "percent-cell-cpu-allocation-wasted",
+#              u'% CPU',
+#              "0-to-1",
+#              "boxplot")
 
-# CELL CPU allocation wasted Time Series
-# plot_1d_data_set_dict(resource_allocation_cpu_wasted,
-#                       "Cluster CPU allocation wasted",
-#                       "percent-cell-cpu-allocation-wasted",
-#                       u'% CPU allocation in cell',
+# #
+# # Cell MEM allocation Time Series
+# plot_1d_data_set_dict(resource_allocation_mem,
+#                       "Cluster Memory allocation",
+#                       "percent-cell-mem-allocation",
+#                       u'% memory allocation in cell',
 #                       "0-to-1",
 #                       "timeseries")
-
-plot_boxplot(resource_allocation_cpu_wasted,
-             "Cluster CPU allocation wasted",
-             "percent-cell-cpu-allocation-wasted",
-             u'% CPU',
-             "0-to-1",
-             "boxplot")
-
-#
-# Cell MEM allocation Time Series
-plot_1d_data_set_dict(resource_allocation_mem,
-                      "Cluster Memory allocation",
-                      "percent-cell-mem-allocation",
-                      u'% memory allocation in cell',
-                      "0-to-1",
-                      "timeseries")
-#
-plot_boxplot(resource_allocation_mem,
-             "Cluster Memory allocation",
-             "percent-cell-mem-allocation",
-             u'% memory',
-             "0-to-1",
-             "boxplot")
+# #
+# plot_boxplot(resource_allocation_mem,
+#              "Cluster Memory allocation",
+#              "percent-cell-mem-allocation",
+#              u'% memory',
+#              "0-to-1",
+#              "boxplot")
 
 # Cell MEM allocation wasted Time Series
 # plot_1d_data_set_dict(resource_allocation_mem_wasted,
@@ -2352,12 +2380,12 @@ plot_boxplot(resource_allocation_mem,
 #                       "0-to-1",
 #                       "timeseries")
 
-plot_boxplot(resource_utilization_cpu,
-             "Cluster CPU utilization",
-             "percent-cell-cpu-utilization",
-             u'% CPU',
-             "0-to-1",
-             "boxplot")
+# plot_boxplot(resource_utilization_cpu,
+#              "Cluster CPU utilization",
+#              "percent-cell-cpu-utilization",
+#              u'% CPU',
+#              "0-to-1",
+#              "boxplot")
 
 # CELL CPU allocation wasted Time Series
 # plot_1d_data_set_dict(resource_utilization_cpu_wasted,
@@ -2366,74 +2394,74 @@ plot_boxplot(resource_utilization_cpu,
 #                       u'% CPU allocation in cell',
 #                       "0-to-1",
 #                       "timeseries")
-
-plot_boxplot(resource_utilization_cpu_wasted,
-             "Cluster CPU utilization wasted",
-             "percent-cell-cpu-utilization-wasted",
-             u'% CPU',
-             "0-to-1",
-             "boxplot")
-
-# Cell MEM Utilization Time Series
-plot_1d_data_set_dict(resource_utilization_mem,
-                      "Cluster Memory utilization",
-                      "percent-cell-mem-utilization",
-                      u'% memory',
-                      "0-to-1",
-                      "timeseries")
 #
-plot_boxplot(resource_utilization_mem,
-             "Cluster Memory utilization",
-             "percent-cell-mem-utilization",
-             u'% memory',
-             "0-to-1",
-             "boxplot")
+# plot_boxplot(resource_utilization_cpu_wasted,
+#              "Cluster CPU utilization wasted",
+#              "percent-cell-cpu-utilization-wasted",
+#              u'% CPU',
+#              "0-to-1",
+#              "boxplot")
+#
+# # Cell MEM Utilization Time Series
+# plot_1d_data_set_dict(resource_utilization_mem,
+#                       "Cluster Memory utilization",
+#                       "percent-cell-mem-utilization",
+#                       u'% memory',
+#                       "0-to-1",
+#                       "timeseries")
+#
+# plot_boxplot(resource_utilization_mem,
+#              "Cluster Memory utilization",
+#              "percent-cell-mem-utilization",
+#              u'% memory',
+#              "0-to-1",
+#              "boxplot")
 
 # Cell MEM Utilization wasted Time Series
-plot_1d_data_set_dict(resource_utilization_mem_wasted,
-                      "Cluster Memory utilization wasted",
-                      "percent-cell-mem-utilization-wasted",
-                      u'% memory',
-                      "0-to-1",
-                      "timeseries")
-#
-plot_boxplot(resource_utilization_mem_wasted,
-             "Cluster Memory utilization wasted",
-             "percent-cell-mem-utilization-wasted",
-             u'% memory',
-             "0-to-1",
-             "boxplot")
+# plot_1d_data_set_dict(resource_utilization_mem_wasted,
+#                       "Cluster Memory utilization wasted",
+#                       "percent-cell-mem-utilization-wasted",
+#                       u'% memory',
+#                       "0-to-1",
+#                       "timeseries")
+# #
+# plot_boxplot(resource_utilization_mem_wasted,
+#              "Cluster Memory utilization wasted",
+#              "percent-cell-mem-utilization-wasted",
+#              u'% memory',
+#              "0-to-1",
+#              "boxplot")
 
 #
 # Pending Queue Status
-plot_1d_data_set_dict(pending_queue_status,
-                      "Pending Queue Status",
-                      "pending-queue-status",
-                      u'Applications in queue',
-                      "abs",
-                      "timeseries")
-
-plot_boxplot(pending_queue_status,
-             "Pending Queue",
-             "pending-queue-status",
-             u'Applications in queue',
-             "abs",
-             "boxplot")
+# plot_1d_data_set_dict(pending_queue_status,
+#                       "Pending Queue Status",
+#                       "pending-queue-status",
+#                       u'Applications in queue',
+#                       "abs",
+#                       "timeseries")
+#
+# plot_boxplot(pending_queue_status,
+#              "Pending Queue",
+#              "pending-queue-status",
+#              u'Applications in queue',
+#              "abs",
+#              "boxplot")
 
 # # Running Queue Status
-plot_1d_data_set_dict(running_queue_status,
-                      "Running Queue Status",
-                      "running-queue-status",
-                      u'Applications running',
-                      "abs",
-                      "timeseries")
-
-plot_boxplot(running_queue_status,
-             "Running Applications",
-             "running-queue-status",
-             u'Applications running',
-             "abs",
-             "boxplot")
+# plot_1d_data_set_dict(running_queue_status,
+#                       "Running Queue Status",
+#                       "running-queue-status",
+#                       u'Applications running',
+#                       "abs",
+#                       "timeseries")
+#
+# plot_boxplot(running_queue_status,
+#              "Running Applications",
+#              "running-queue-status",
+#              u'Applications running',
+#              "abs",
+#              "boxplot")
 #
 # logging.info("# Dumping datasets on JSON file...")
 # logging.info("#     Execution Times per Job Id")
@@ -2442,15 +2470,27 @@ plot_boxplot(running_queue_status,
 
 
 # AGGREGATE Plots
-plot_boxplot_2d({"allocation": resource_allocation_mem, "utilization": resource_utilization_mem},
-                "Cluster Memory",
-                "percent-cell-mem",
-                u'% memory',
-                "0-to-1",
-                "boxplot")
-plot_boxplot_2d({"allocation": resource_allocation_cpu, "utilization": resource_utilization_cpu},
-                "Cluster CPU",
-                "percent-cell-cpu",
-                u'% CPU',
+# plot_boxplot_2d({"allocation": resource_allocation_mem, "utilization": resource_utilization_mem},
+#                 "Cluster Memory",
+#                 "percent-cell-mem",
+#                 u'% memory',
+#                 "0-to-1",
+#                 "boxplot")
+# plot_boxplot_2d({"allocation": resource_allocation_cpu, "utilization": resource_utilization_cpu},
+#                 "Cluster CPU",
+#                 "percent-cell-cpu",
+#                 u'% CPU',
+#                 "0-to-1",
+#                 "boxplot")
+
+resource_dict = OrderedDict({})
+resource_dict["allocation-CPU"] = resource_allocation_cpu
+resource_dict["utilization-CPU"] = resource_utilization_cpu
+resource_dict["allocation-Memory"] = resource_allocation_mem
+resource_dict["utilization-Memory"] = resource_utilization_mem
+plot_boxplot_2d(resource_dict,
+                "Cluster Resources",
+                "percent-cell-resources",
+                u'% Resources',
                 "0-to-1",
                 "boxplot")

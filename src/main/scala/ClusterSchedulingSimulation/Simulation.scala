@@ -67,9 +67,9 @@ object Simulation extends LazyLogging {
     val runNewSpark = false
     val runMesos = false
     val runOmega = false
-    val runZoe = false
+    val runZoe = true
     val runZoePreemption = false
-    val runZoeDynamic = true
+    val runZoeDynamic = false
 
     val globalRunTime = 86400.0 * 90 //86400.0 // 1 Day
     val threadSleep = 5
@@ -144,12 +144,12 @@ object Simulation extends LazyLogging {
       //      Policy.Modes.PriorityFifo,
       //      Policy.Modes.LJF,
 
-//            Policy.Modes.Fifo,
+            Policy.Modes.Fifo,
 //            Policy.Modes.eFifo,
-            Policy.Modes.hFifo,
+            Policy.Modes.hFifo//,
 //            Policy.Modes.PSJF,
       //      Policy.Modes.ePSJF,
-            Policy.Modes.hPSJF//,
+//            Policy.Modes.hPSJF//,
       //      Policy.Modes.SRPT,
       //      Policy.Modes.eSRPT,
       //      Policy.Modes.hSRPT//,
@@ -1520,7 +1520,8 @@ object Simulation extends LazyLogging {
       .concurrent
       .Executors
       .newFixedThreadPool(numThreads)
-    Seed.set(randomSeed)
+//    Seed.set(randomSeed)
+    Seed.set(0)
     logger.info(("Running %d experiments with the following options:\n" +
       "\t - threads:     %d\n" +
       "\t - random seed: %d\n").format(numTotalExps, numThreads, randomSeed))
