@@ -3,7 +3,6 @@ package ClusterSchedulingSimulation.workloads
 import ClusterSchedulingSimulation.core._
 import ClusterSchedulingSimulation.utils.{Seed, UniqueIDGenerator}
 import breeze.linalg._
-import breeze.plot._
 import breeze.signal.OptOverhang
 import breeze.stats.distributions.{Bernoulli, Gaussian, RandBasis}
 import org.apache.commons.math3.distribution.LogNormalDistribution
@@ -116,8 +115,10 @@ class TraceAllZoeWLGenerator(val workloadName: String,
     }
     //    assert(numJobs == workload.numJobs, "Num Jobs generated differs from what has been asked")
     workload.sortJobs()
-    val lastJob = workload.getJobs.last
-    logger.info("The last job arrives at " + lastJob.submitted + " and will finish at " + (lastJob.submitted + lastJob.jobDuration))
+    if(workload.getJobs.nonEmpty){
+      val lastJob = workload.getJobs.last
+      logger.info("The last job arrives at " + lastJob.submitted + " and will finish at " + (lastJob.submitted + lastJob.jobDuration))
+    }
 
     logger.info("Done generating " + workloadName + " Workload.\n")
 

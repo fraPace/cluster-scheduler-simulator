@@ -174,9 +174,9 @@ case class Job(id: Long,
   def cpuUtilization: Array[Float] = _cpuUtilization
   def cpuUtilization_=(value: Array[Float]): Unit = {
     if(value.nonEmpty){
-      value.foreach(v => assert(v <= cpusPerTask, {
-        "CPU Utilization (" + v + ") is higher than allocated (" + cpusPerTask + ")."
-      }))
+//      value.foreach(v => assert(v <= 1F, {
+//        "CPU Utilization (" + v + ") is higher than 1."
+//      }))
       assert(value.length == jobDuration.toInt, {
         "The number of points must be equal to the job duration."
       })
@@ -192,9 +192,9 @@ case class Job(id: Long,
   def memoryUtilization: Array[Float] = _memoryUtilization
   def memoryUtilization_=(value: Array[Float]): Unit = {
     if(value.nonEmpty){
-      value.foreach(v => assert(v <= memPerTask, {
-        "Memory Utilization (" + v + ") is higher than allocated (" + memPerTask + ")."
-      }))
+//      value.foreach(v => assert(v <= 1F, {
+//        "Memory Utilization (" + v + ") is higher than 1."
+//      }))
       _memoryUtilization = value
       // We use this formula be able to divide the utilization in buckets
       // By also considering to have fewer points than the total size of the array

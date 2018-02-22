@@ -59,3 +59,4 @@ resolvers += "Sonatype Releases" at "https://oss.sonatype.org/content/repositori
 
 // https://mvnrepository.com/artifact/org.jblas/jblas
 libraryDependencies += "org.jblas" % "jblas" % "1.2.4"
+

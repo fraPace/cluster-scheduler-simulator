@@ -334,6 +334,12 @@ label_translation = {
 
     "allocation": "",
     "utilization": "",
+
+    "baseline": "Baseline",
+    "dynamicOptimistic": "Dynamic Optimistic",
+    # "dynamicPessimistic": "Dynamic Pessimistic",
+    "dynamicPessimistic": "Dynamic",
+    "flexible": "Flexible"
 }
 
 blacklist = ["hPSJF"]
@@ -398,6 +404,7 @@ workload_job_arrival_time = {}
 workload_job_inter_arrival_time = {}
 
 workload_job_scheduled_turnaround = {}
+workload_job_scheduled_turnaround_global = {}
 workload_job_scheduled_turnaround_numtasks = {}
 workload_job_scheduled_queue_time = {}
 workload_job_scheduled_queue_time_numtasks = {}
@@ -416,6 +423,9 @@ resource_utilization_cpu = {}
 resource_utilization_cpu_wasted = {}
 resource_utilization_mem = {}
 resource_utilization_mem_wasted = {}
+
+resource_slack_cpu = {}
+resource_slack_mem = {}
 
 pending_queue_status = {}
 running_queue_status = {}
@@ -466,7 +476,7 @@ class ExperimentEnv:
                              env.experiment_result[0].constant_think_time,
                              env.experiment_result[1].constant_think_time))
         elif (env.experiment_result[0].per_task_think_time !=
-                  env.experiment_result[1].per_task_think_time):
+              env.experiment_result[1].per_task_think_time):
             vary_dim = "l"
             logging.debug("Varying %s. The first two experiments' l values were %d, %d "
                           % (vary_dim,
@@ -543,6 +553,9 @@ logging.info("Output prefix: %s" % output_prefix)
 logging.info("Input file(s): %s" % input_protobuffs)
 
 input_list = input_protobuffs.split(",")
+# FIXME: Remove the next line when experiments plotting is done for ATC'18 paper
+input_list.append(
+    "/mnt/d/Logs/Scheduling/dynamic/50x-5-3000/seed0/baseline/2017-12-30-10-47-54-vary_Lambda-EurecomCMB_PBB-7776000/zoe-multi_path-vary_lambda-allocation_allcore-policy_hfifo-7776000.protobuf")
 logging.info("protobuff list: %s" % input_list)
 
 for filename in input_list:
@@ -555,6 +568,17 @@ for filename in input_list:
 
     # Loop through each experiment environment.
     experiment_name = experiment_result_set.experiment_name
+    # FIXME: Remove the next 3 IFs when experiments plotting is done for ATC'18 paper
+    _filename = os.path.basename(filename)
+    logging.info("### %s." % _filename)
+    if _filename == "zoe-multi_path-vary_lambda-allocation_allcore-policy_hfifo-7776000.protobuf":
+        experiment_name = "zoe_dynamic-multi_path-vary_lambda-allocation_allcore-policy_flexible"
+    if _filename == "zoe_dynamic-multi_path-vary_lambda-allocation_allcore-policy_baseline-7776000.protobuf":
+        experiment_name = "zoe_dynamic-multi_path-vary_lambda-allocation_allcore-policy_baseline"
+    if _filename == "zoe_dynamic-multi_path-vary_lambda-allocation_allcore-policy_dynamicPessimistic-7776000.protobuf":
+        experiment_name = "zoe_dynamic-multi_path-vary_lambda-allocation_allcore-policy_dynamicPessimistic"
+    if _filename == "zoe_dynamic-multi_path-vary_lambda-allocation_allcore-policy_dynamicOptimistic-7776000.protobuf":
+        experiment_name = "zoe_dynamic-multi_path-vary_lambda-allocation_allcore-policy_dynamicOptimistic"
     logging.info(
         "Processing {} experiment envs with name {}".format(len(experiment_result_set.experiment_env), experiment_name))
 
@@ -706,6 +730,14 @@ for filename in input_list:
             if policy not in resource_utilization_mem_wasted:
                 resource_utilization_mem_wasted[policy] = exp_result.resource_utilization_wasted.memory
 
+            logging.info("Building results [resources slack]")
+            if policy not in resource_slack_cpu:
+                resource_slack_cpu[policy] = \
+                    np.array(exp_result.resource_allocation.cpu) - np.array(exp_result.resource_utilization.cpu)
+            if policy not in resource_slack_mem:
+                resource_slack_mem[policy] = \
+                    np.array(exp_result.resource_allocation.memory) - np.array(exp_result.resource_utilization.memory)
+
             # i = 0
             # for cpu in exp_result.resource_allocation.cpu:
             #     resource_allocation_cpu[policy].append((i, cpu))
@@ -749,6 +781,9 @@ for filename in input_list:
                                         workload_name,
                                         policy,
                                         job_stats.turnaround)
+                    append_or_create(workload_job_scheduled_turnaround_global,
+                                     policy,
+                                     job_stats.turnaround)
 
                     # # Turnaround/num_tasks
                     # append_or_create_2d(workload_job_scheduled_turnaround_numtasks,
@@ -1611,23 +1646,36 @@ def plot_boxplot(data_set_1d_dict,
     all_x_vals_set = sets.Set()
     medianprops = dict(linewidth=5, color='k')
     position = 1
+    offset = 1
     labels = []
     y_vals_set = sets.Set()
-    for exp_env in sort_keys(data_set_1d_dict):
-        values = data_set_1d_dict[exp_env]
-        exp_env_split = exp_env.split("-")
-        preemptive = False
-        if len(exp_env_split) > 1 and exp_env_split[1] == "Pre":
-            exp_env = exp_env_split[0]
-            preemptive = True
-        # else:
-        #     exp_env = "No"
 
-        if exp_env in label_translation:
-            label = label_translation[exp_env]
-        else:
-            label = exp_env
-        labels.append(label)
+    custom_legend = False
+    legend_obj = []
+    legend_labels = []
+    leg = None
+    # for __exp_env in sort_keys(data_set_1d_dict):
+    for __exp_env in data_set_1d_dict:
+        values = data_set_1d_dict[__exp_env]
+
+        preemptive = False
+        memory_or_cpu = ""
+        color = "w"
+        hatch = ""
+
+        _exp_env = __exp_env.split("-")
+        exp_env = _exp_env[0]
+        if len(_exp_env) > 1:
+            if _exp_env[1] == "Pre":
+                preemptive = True
+            else:
+                custom_legend = True
+                memory_or_cpu = _exp_env[1]
+
+        if exp_env == "baseline":
+            color = "gray"
+        if exp_env == "dynamicOptimistic" or exp_env == "flexible":
+            hatch = "+"
 
         x_vals = values
 
@@ -1637,15 +1685,26 @@ def plot_boxplot(data_set_1d_dict,
         if len(x_vals) >= average_threshold:
             x_vals = average(x_vals, average_interval)
 
+        if exp_env in label_translation:
+            exp_env = label_translation[exp_env]
+
+        if memory_or_cpu != "":
+            if memory_or_cpu in label_translation:
+                memory_or_cpu = label_translation[memory_or_cpu]
+            label = memory_or_cpu
+        else:
+            label = exp_env
+        labels.append(label)
+
         # color = 'gray'
-        color = 'w'
-        label = label.encode('ascii', 'ignore')
-        if label.startswith('h'):
-            color = 'w'
-        if label.startswith('e'):
-            color = 'r'
-        if preemptive:
-            color = 'gray'
+        # color = 'w'
+        # label = label.encode('ascii', 'ignore')
+        # if label.startswith('h'):
+        #     color = 'w'
+        # if label.startswith('e'):
+        #     color = 'r'
+        # if preemptive:
+        #     color = 'gray'
 
         x_mav = moving_average_exp(x_vals, moving_average_exp_weight)
         y_vals_set = y_vals_set.union(x_mav)
@@ -1658,18 +1717,33 @@ def plot_boxplot(data_set_1d_dict,
                             # medianprops=medianprops,
                             # showfliers=False
                             )
+            ax.plot([position], [np.mean(x_mav)], 'r^', markersize=15)
             for box in bp['boxes']:
                 # # change outline color
                 # box.set( color='#7570b3', linewidth=2)
                 # change fill color
                 box.set(facecolor=color)
-                # box.set(hatch=hatch)
-        position += 1
+                box.set(hatch=hatch)
+                if custom_legend and exp_env not in legend_labels:
+                    br = plt.bar(0, 1, 1, color=color, hatch=hatch, label=exp_env)
+                    legend_obj.append(br)
+                    legend_labels.append(exp_env)
+        position += offset
+
+    if len(legend_obj) != 0:
+        leg = plt.legend(tuple(legend_obj), tuple([v.title() for v in legend_labels]), bbox_to_anchor=(0.0, 1.0),
+                         borderaxespad=0.2, labelspacing=0, ncol=3, columnspacing=0.5, loc=2, fontsize=20)
+        fr = leg.get_frame()
+        fr.set_linewidth(0)
+        fr.set_alpha(0)
+        for obj in legend_obj:
+            for patch in obj.patches:
+                patch.set_visible(False)
 
     if x_axis_type != "":
         vary_dim = x_axis_type
     setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, labels, y_vals_set=y_vals_set,
-                        v_dim=vary_dim)
+                        v_dim=vary_dim, custom_legend=leg)
     # except Exception as e:
     #     logging.warn(e)
 
@@ -1687,11 +1761,12 @@ def plot_boxplot_2d(data_set_2d_dict,
     # try:
     plt.clf()
     ax = fig.add_subplot(111)
-    labels = []
-    avg = {}
-    y_vals_set = sets.Set()
     position = 1
     offset = 1
+    labels = []
+    y_vals_set = sets.Set()
+
+    avg = {}
     custom_legend = False
     legend_obj = []
     legend_labels = []
@@ -1788,7 +1863,8 @@ def plot_boxplot_2d(data_set_2d_dict,
             position += offset
 
     if len(legend_obj) != 0:
-        leg = plt.legend(tuple(legend_obj), tuple([v.title() for v in legend_labels]), bbox_to_anchor=(1.045, 1.05), labelspacing=0, ncol=2)
+        leg = plt.legend(tuple(legend_obj), tuple([v.title() for v in legend_labels]), bbox_to_anchor=(1.045, 1.05),
+                         labelspacing=0, ncol=2)
         fr = leg.get_frame()
         fr.set_linewidth(0)
         fr.set_alpha(0)
@@ -1896,8 +1972,8 @@ def setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, x
     elif v_dim == "boxplot":
         ax.set_xscale('linear')
         ax.grid(False)
-        # ax.yaxis.grid(True, which='both')
-        ax.yaxis.grid(True)
+        ax.yaxis.grid(True, which='both')
+        # ax.yaxis.grid(True)
 
         labels = []
         # i = 0
@@ -1932,9 +2008,9 @@ def setup_graph_details(ax, plot_title, filename_suffix, y_label, y_axis_type, x
             x_ticks = ticks
             logging.info("{} {}".format(step, x_ticks))
         if len(x_ticks) > 0:
-            x_lim = [0, math.ceil(max(x_ticks)) + step - 1]
+            x_lim = [0.5, math.ceil(max(x_ticks)) + step - 1.5]
             # plt.xticks(x_ticks, labels)
-            plt.xticks(x_ticks, labels)#, rotation=85)
+            plt.xticks(x_ticks, labels)  # , rotation=85)
             plt.xlim(x_lim)
     elif len(x_vals_set) != 0 and max(x_vals_set) - min(x_vals_set) < 20:
         ax.set_xscale('linear')
@@ -2224,12 +2300,23 @@ for workload_name, workload_to_policy_map in workload_job_scheduled_turnaround.i
 #                      u'Runtime (s)',
 #                      "0-to-1")
 
-plot_boxplot_2d(workload_job_scheduled_turnaround,
-                "Application Turnaround",
-                "job-turnaround-distribution",
-                u'Time (s)',
-                "abs",
-                "boxplot")
+# plot_boxplot_2d(workload_job_scheduled_turnaround,
+#                 "Application Turnaround",
+#                 "job-turnaround-distribution",
+#                 u'Time (s)',
+#                 "abs",
+#                 "boxplot")
+
+turnaround_dict = OrderedDict({})
+turnaround_dict["baseline"] = workload_job_scheduled_turnaround_global["baseline"]
+turnaround_dict["flexible"] = workload_job_scheduled_turnaround_global["flexible"]
+turnaround_dict["dynamicPessimistic"] = workload_job_scheduled_turnaround_global["dynamicPessimistic"]
+plot_boxplot(turnaround_dict,
+             "Turnaround",
+             "job-turnaround-distribution",
+             u'Time (s)',
+             "abs",
+             "boxplot")
 
 # plot_distribution_2d(workload_job_scheduled_execution_time,
 #                      "Application Execution Time distribution",
@@ -2250,12 +2337,12 @@ plot_boxplot_2d(workload_job_scheduled_turnaround,
 #                      u'Runtime (s)',
 #                      "0-to-1")
 
-plot_boxplot_2d(workload_job_scheduled_queue_time,
-                "Application Queue",
-                "job-queue-time-distribution",
-                u'Time (s)',
-                "abs",
-                "boxplot")
+# plot_boxplot_2d(workload_job_scheduled_queue_time,
+#                 "Application Queue",
+#                 "job-queue-time-distribution",
+#                 u'Time (s)',
+#                 "abs",
+#                 "boxplot")
 
 # plot_distribution_2d(workload_job_scheduled_slowdown,
 #                      "Application Slowdown Time distribution",
@@ -2263,12 +2350,12 @@ plot_boxplot_2d(workload_job_scheduled_queue_time,
 #                      u'Runtime (s)',
 #                      "0-to-1")
 #
-plot_boxplot_2d(workload_job_scheduled_slowdown,
-                "Application Slowdown",
-                "job-slowdown-time-distribution",
-                u'Ratio',
-                "abs",
-                "boxplot")
+# plot_boxplot_2d(workload_job_scheduled_slowdown,
+#                 "Application Slowdown",
+#                 "job-slowdown-time-distribution",
+#                 u'Ratio',
+#                 "abs",
+#                 "boxplot")
 # if len(workload_job_scheduled_turnaround_ratio_preemption) > 0:
 #     plot_boxplot_2d(workload_job_scheduled_turnaround_ratio_preemption,
 #                     "Turnaround Ratio",
@@ -2482,15 +2569,44 @@ plot_boxplot_2d(workload_job_scheduled_slowdown,
 #                 u'% CPU',
 #                 "0-to-1",
 #                 "boxplot")
+resource_dict = OrderedDict({})
+resource_dict["baseline-CPU"] = resource_slack_cpu["baseline"]
+if "flexible" in resource_slack_cpu:
+    resource_dict["flexible-CPU"] = resource_slack_cpu["flexible"]
+if "dynamicOptimistic" in resource_slack_cpu:
+    resource_dict["dynamicOptimistic-CPU"] = resource_slack_cpu["dynamicOptimistic"]
+resource_dict["dynamicPessimistic-CPU"] = resource_slack_cpu["dynamicPessimistic"]
+
+resource_dict["baseline-Memory"] = resource_slack_mem["baseline"]
+if "flexible" in resource_slack_mem:
+    resource_dict["flexible-Memory"] = resource_slack_mem["flexible"]
+if "dynamicOptimistic" in resource_slack_mem:
+    resource_dict["dynamicOptimistic-Memory"] = resource_slack_mem["dynamicOptimistic"]
+resource_dict["dynamicPessimistic-Memory"] = resource_slack_mem["dynamicPessimistic"]
+plot_boxplot(resource_dict,
+             "Resource Slack",
+             "percent-cell-resources-slack",
+             u'Percentage (%)',
+             "0-to-1",
+             "boxplot")
 
 resource_dict = OrderedDict({})
-resource_dict["allocation-CPU"] = resource_allocation_cpu
-resource_dict["utilization-CPU"] = resource_utilization_cpu
-resource_dict["allocation-Memory"] = resource_allocation_mem
-resource_dict["utilization-Memory"] = resource_utilization_mem
-plot_boxplot_2d(resource_dict,
-                "Cluster Resources",
-                "percent-cell-resources",
-                u'% Resources',
-                "0-to-1",
-                "boxplot")
+resource_dict["baseline-CPU"] = resource_slack_cpu["baseline"]
+if "flexible" in resource_allocation_cpu:
+    resource_dict["flexible-CPU"] = resource_allocation_cpu["flexible"]
+if "dynamicOptimistic" in resource_allocation_cpu:
+    resource_dict["dynamicOptimistic-CPU"] = resource_allocation_cpu["dynamicOptimistic"]
+resource_dict["dynamicPessimistic-CPU"] = resource_allocation_cpu["dynamicPessimistic"]
+
+resource_dict["baseline-Memory"] = resource_allocation_mem["baseline"]
+if "flexible" in resource_allocation_mem:
+    resource_dict["flexible-Memory"] = resource_allocation_mem["flexible"]
+if "dynamicOptimistic" in resource_allocation_mem:
+    resource_dict["dynamicOptimistic-Memory"] = resource_allocation_mem["dynamicOptimistic"]
+resource_dict["dynamicPessimistic-Memory"] = resource_allocation_mem["dynamicPessimistic"]
+plot_boxplot(resource_dict,
+             "Resources Allocation",
+             "percent-cell-resources-allocation",
+             u'Percentage (%)',
+             "0-to-1",
+             "boxplot")

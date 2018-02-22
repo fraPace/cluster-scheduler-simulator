@@ -2,7 +2,6 @@ package ClusterSchedulingSimulation.core
 
 import com.typesafe.scalalogging.LazyLogging
 
-import scala.collection.immutable.VectorBuilder
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
@@ -152,7 +151,7 @@ class CellState(val numMachines: Int,
     })
     val cpus = allocatedCpusPerMachine(machineID)
     assert(cpus <= cpusPerMachine, {
-      "Allocated more CPUs (" + cpus + ") then possible (" + cpusPerMachine + ")"
+      "Allocated more CPUs (" + cpus + ") than possible (" + cpusPerMachine + ")"
     })
     cpusPerMachine - cpus
   }
@@ -163,7 +162,7 @@ class CellState(val numMachines: Int,
     })
     val mem = allocatedMemPerMachine(machineID)
     assert(mem <= memPerMachine, {
-      "Allocated more Memory (" + mem + ") then possible (" + memPerMachine + ")"
+      "Allocated more Memory (" + mem + ") than possible (" + memPerMachine + ")"
     })
     memPerMachine - mem
   }

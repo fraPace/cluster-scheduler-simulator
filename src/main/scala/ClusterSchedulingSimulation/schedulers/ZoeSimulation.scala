@@ -483,8 +483,8 @@ class ZoeScheduler(name: String,
       scheduling = true
 
       simulator.logger.info(loggerPrefix + " There are " + pendingQueueSize + " jobs in queue and " + runningQueueSize + " running.")
-      simulator.logger.info(loggerPrefix + " The global cell state is (" + simulator.cellState.availableCpus + " CPUs, " +
-        simulator.cellState.availableMem + " mem with " + simulator.cellState.claimDeltas.size + " claimDeltas)")
+      simulator.logger.info(loggerPrefix + " The global cell state is (" + simulator.cellState.availableCpus + " CPUs available, " +
+        simulator.cellState.availableMem + " mem available with " + simulator.cellState.claimDeltas.size + " claimDeltas)")
 
       val jobsToAttemptScheduling: ListBuffer[Job] = ListBuffer[Job]() ++ _pendingQueue
 //        if (policy.mode == Policy.Modes.Fifo || policy.mode == Policy.Modes.eFifo)

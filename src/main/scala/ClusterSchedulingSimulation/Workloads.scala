@@ -30,7 +30,7 @@ import java.io.File
 
 import ClusterSchedulingSimulation.core.{CellStateDesc, WorkloadDesc}
 import ClusterSchedulingSimulation.utils.Constant
-import ClusterSchedulingSimulation.workloads.{FakeZoeDynamicWorkloadGenerator, FakeZoeWorkloadGenerator, TraceAllZoeWLGenerator}
+import ClusterSchedulingSimulation.workloads.TraceAllZoeWLGenerator
 
 /**
   * Set up workloads based on measurements from a real cluster.
@@ -44,7 +44,7 @@ object Workloads {
   val scaleFactor = 1
   val introduceError = false
 
-  val workloadSize: Int = 3000 * scaleFactor
+  val workloadSize: Int = 300 * scaleFactor
 
   val globalNumMachines: Int = 5 * scaleFactor
   val globalCpusPerMachine: Long = 32 * 1000L // value must be in millicores

@@ -19,13 +19,15 @@ TO_MAIL="francesco.pace@eurecom.fr"
 
 # This function run the simulation script inside a container
 function run_simulation(){
+    args=${@}
     pushd ${project_dir}
 #    rm -rf experiment_results
 
     set -e
     mkdir logs
     date=$(date +%Y-%m-%d-%H-%M-%S)
-    bash bin/sbt "run" | tee "logs/output_${date}.log"
+    echo "Launching command line: bin/sbt run ${args}"
+    bash bin/sbt "run ${args}" | tee "logs/output_${date}.log"
     bash bin/generate-graphs.sh "$(ls -d -1 -t $PWD/experiment_results/** | head -1)" | tee "logs/output_${date}.log"
     exit_code=$?
     set +e
@@ -81,9 +83,9 @@ cp -r ${project_dir} ${HOME}
 project_dir="${HOME}/${project_name}"
 echo "# Copied project in ${project_dir}"
 
-run_simulation
+run_simulation ${@}
 ret=$?
-send_mail ${ret}
+#send_mail ${ret}
 
 mkdir "${original_project_dir}/../logs"
 cp -r ${project_dir}/experiment_* "${original_project_dir}/../logs"

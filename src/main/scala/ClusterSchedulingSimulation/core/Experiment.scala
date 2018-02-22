@@ -698,10 +698,10 @@ class ExperimentRun(
       "(" + totalJobNotScheduled + ") Fully: " + totalJobFinished + " Total: " + totalJobs + " | Timeouts: " + totalTimeouts + " | Scheduling Attempts: " + totalSchedulingAttempts)
     logger.info("[" + name + "][Stats][Queues] Jobs Throughput: %.2f".format(totalJobFinished / simulatorRunTime) + " | Left in queue: " + totalJobsLeftInQueue +
       " | Avg Queue Size: " + totalAvgQueueSize / simulator.schedulers.size.toDouble + " | Avg Running Size: " + totalAvgRunningSize / simulator.schedulers.size.toDouble)
-    logger.info("[" + name + "][Stats][Allocation] Avg CPU(Wasted): %.2f".format(experimentResult.getCellStateAvgCpuAllocation)  + "(%.2f)".format(simulator.avgCpuAllocationWasted) +
-      " | Avg Mem(Wasted): %.2f".format(experimentResult.getCellStateAvgMemAllocation) + "(%.2f)".format(simulator.avgMemAllocationWasted))
-    logger.info("[" + name + "][Stats][Utilization] Avg CPU(Wasted): %.2f".format(experimentResult.getCellStateAvgCpuUtilization) + "(%.2f)".format(simulator.avgCpuUtilizationWasted) +
-      " | Avg Mem(Wasted): %.2f".format(experimentResult.getCellStateAvgMemUtilization) + "(%.2f)".format(simulator.avgMemUtilizationWasted))
+    logger.info("[" + name + "][Stats][Allocation] Avg CPU(Wasted): %.2f%%".format(experimentResult.getCellStateAvgCpuAllocation * 100)  + "(%.2f%%)".format(simulator.avgCpuAllocationWasted * 100) +
+      " | Avg Mem(Wasted): %.2f%%".format(experimentResult.getCellStateAvgMemAllocation * 100) + "(%.2f%%)".format(simulator.avgMemAllocationWasted * 100))
+    logger.info("[" + name + "][Stats][Utilization] Avg CPU(Wasted): %.2f%%".format(experimentResult.getCellStateAvgCpuUtilization * 100) + "(%.2f%%)".format(simulator.avgCpuUtilizationWasted * 100) +
+      " | Avg Mem(Wasted): %.2f%%".format(experimentResult.getCellStateAvgMemUtilization * 100) + "(%.2f%%)".format(simulator.avgMemUtilizationWasted * 100))
     logger.info("[" + name + "][Stats][Dynamic] CPU Conflicts: " + totalCpuUtilizationConflicts + " | Mem Conflicts: " + totalMemoryUtilizationConflicts +
       " | JobsDisabledResize: " + totalJobDisabledResize + " (" + (totalJobDisabledResize / totalJobScheduled.toDouble * 100) + "%)" +
       " | Jobs Crashed At Least Once: " + totalJobCrashedAtLeastOnce + " (%.2f%%)".format(totalJobCrashedAtLeastOnce / totalJobScheduled.toDouble * 100)  +

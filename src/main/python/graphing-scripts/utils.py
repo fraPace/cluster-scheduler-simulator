@@ -59,7 +59,7 @@ def set_leg_fontsize(size):
 
 def set_paper_rcs():
     rc('font', **{'family': 'sans-serif', 'sans-serif': ['Helvetica'],
-                  'serif': ['Helvetica'], 'size': 22})
+                  'serif': ['Helvetica'], 'size': 26})
     # rc('text', usetex=True)
     # rc('legend', fontsize=7)
     # rc('figure', figsize=(3.33, 2.22))

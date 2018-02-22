@@ -22,7 +22,7 @@ object ClaimDelta {
     @inline final val DecreaseRatio: Double = 1
     // Value greater than 0 will add more resources than used above the safe margin
     @inline final val IncreaseRatio: Double = 0
-    @inline final val SafeMargin: Double = 0.1
+    @inline final val SafeMargin: Double = System.getProperty("nosfe.simulator.core.scheduler.safeMargin", "0").toDouble
 
     type ResizePolicy = Value
     val Instant, Average, Maximum, MovingAverage, MovingMaximum, None = Value
@@ -180,7 +180,7 @@ class ClaimDelta(val id: Long,
       deltaCpus -= (deltaCpus * (1 - ClaimDelta.ResizePolicy.DecreaseRatio)).toLong
     }
 
-    var deltaMem =
+    var deltaMem: Long =
       if(resizePolicy != ClaimDelta.ResizePolicy.None)
 //        (ClaimDelta.ResizePolicy.calculate(memUtilization, mem, resizePolicy) * (1 + safeGuard)).toLong - currentMem
         (ClaimDelta.ResizePolicy.calculate(memUtilization, mem, resizePolicy) + (requestedMem * safeGuard)).toLong - currentMem
@@ -228,7 +228,7 @@ class ClaimDelta(val id: Long,
     }
     currentCpus += deltaCpus
 
-    var deltaMem =
+    var deltaMem: Long =
       if(resizePolicy != ClaimDelta.ResizePolicy.None)
         mem - currentMem
       else 0

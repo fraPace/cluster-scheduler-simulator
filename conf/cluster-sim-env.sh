@@ -33,4 +33,4 @@
 #            the heap size, make this -Xmx500m for a 500meg heap or
 #            -Xmx1G for 1gig heap (this example is commented out below).
 #export JAVA_OPTS="-Xms2048M -Xmx16384M -Xss1M -XX:+CMSClassUnloadingEnabled -XX:MaxPermSize=512M -XX:-UseParallelOldGC"
-export JAVA_OPTS="-Xms1g -Xmx16g -XX:+UseParallelGC"
+export JAVA_OPTS="-Xms1g -Xmx118g -XX:+UseParallelGC"

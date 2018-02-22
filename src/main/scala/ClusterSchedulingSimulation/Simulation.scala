@@ -28,6 +28,7 @@ package ClusterSchedulingSimulation
 
 import java.io.{File, FileInputStream, FileOutputStream}
 import java.nio.channels.FileChannel
+import java.util.concurrent.Future
 
 import ClusterSchedulingSimulation.Workloads._
 import ClusterSchedulingSimulation.core.{AllocationMode, Experiment, SchedulerDesc, WorkloadDesc}
@@ -36,16 +37,16 @@ import ClusterSchedulingSimulation.utils.{ParseParams, Profiling, Seed}
 import com.typesafe.scalalogging.LazyLogging
 
 import scala.collection.mutable.{ArrayBuffer, ListBuffer}
+import scala.io.Source
 
 object Simulation extends LazyLogging {
   def main(args: Array[String]) {
 
     val availableProcessors = Runtime.getRuntime.availableProcessors()
-    val helpString = "Usage: bin/sbt run [--thread-pool-size INT_NUM_THREADS] [--random-seed INT_SEED_VALUE]"
+    val helpString = "Usage: bin/sbt run --config-file FILE_PATH [--thread-pool-size INT_NUM_THREADS]"
     val pp = new ParseParams(helpString)
     pp.parm("--thread-pool-size", availableProcessors.toString).rex("^\\d*") // optional_arg
-    //    pp.parm("--random-seed", "%d".format(util.Random.nextLong)).rex("^\\d*") // optional_arg
-    pp.parm("--random-seed", "0").rex("^\\d*") // optional_arg
+    pp.parm("--config-file", "").req(true)
 
     var inputArgs = Map[String, String]()
     val result = pp.validate(args.toList)
@@ -57,19 +58,38 @@ object Simulation extends LazyLogging {
     }
 
     var numThreads = Math.min(inputArgs("--thread-pool-size").toInt, availableProcessors)
-    val randomSeed: Long = inputArgs("--random-seed").toLong
+    val randomSeed: Long = System.getProperty("nosfe.simulator.simulation.seed", "0").toLong
+
+    val configFile: String = inputArgs("--config-file")
+    val bufferedSource = Source.fromFile(configFile)
+    for (line <- bufferedSource.getLines) {
+      val splittedLine: Array[String] = line.split(" ")
+      if (splittedLine.length > 2){
+        logger.error("Wrong format in the config file. Format should be: property value")
+        System.exit(-10)
+      } else if (splittedLine.length == 2){
+        System.setProperty(splittedLine(0), splittedLine(1))
+      }
+    }
+    bufferedSource.close
 
     /**
       * Start Config Variables
       */
-    val runMonolithic = false
-    val runSpark = false
-    val runNewSpark = false
-    val runMesos = false
-    val runOmega = false
-    val runZoe = true
-    val runZoePreemption = false
-    val runZoeDynamic = false
+
+    var runMonolithic = false
+    var runSpark = false
+    var runNewSpark = false
+    var runMesos = false
+    var runOmega = false
+    var runZoe = false
+    var runZoePreemption = false
+    var runZoeDynamic = false
+    System.getProperty("nosfe.simulator.simulation.run", "zoe").split(",").foreach {
+      case "zoe" => runZoe = true
+      case "zoedynamic" => runZoeDynamic = true
+      case _ =>
+    }
 
     val globalRunTime = 86400.0 * 90 //86400.0 // 1 Day
     val threadSleep = 5
@@ -140,49 +160,58 @@ object Simulation extends LazyLogging {
     val sweepLambda = true
 
     val allocationModes = List[AllocationMode.Value](AllocationMode.AllCore) //, AllocationModes.Incremental)
-    val policyModes = List[Policy.Modes.Value](
-      //      Policy.Modes.PriorityFifo,
-      //      Policy.Modes.LJF,
+    val policyModes = ListBuffer[Policy.Modes.Value]()
+    System.getProperty("nosfe.simulator.simulation.policies", "fifo").split(",").foreach {
+      case "fifo" => policyModes += Policy.Modes.Fifo
+      case "hfifo" => policyModes += Policy.Modes.hFifo
+      case "sjf" => policyModes += Policy.Modes.PSJF
+      case "hsjf" => policyModes += Policy.Modes.hPSJF
+      case _ =>
+    }
 
-            Policy.Modes.Fifo,
-//            Policy.Modes.eFifo,
-            Policy.Modes.hFifo//,
-//            Policy.Modes.PSJF,
-      //      Policy.Modes.ePSJF,
+//    val policyModes = List[Policy.Modes.Value](
+//      //      Policy.Modes.PriorityFifo,
+//      //      Policy.Modes.LJF,
+//
+////            Policy.Modes.Fifo,
+////            Policy.Modes.eFifo,
+////            Policy.Modes.hFifo//,
+////            Policy.Modes.PSJF,
+//      //      Policy.Modes.ePSJF,
 //            Policy.Modes.hPSJF//,
-      //      Policy.Modes.SRPT,
-      //      Policy.Modes.eSRPT,
-      //      Policy.Modes.hSRPT//,
-      //      Policy.Modes.HRRN,
-      //      Policy.Modes.eHRRN,
-      //      Policy.Modes.hHRRN//,
-      //
-      //      Policy.Modes.PSJF2D,
-      //      Policy.Modes.ePSJF2D,
-      //      Policy.Modes.hPSJF2D,
-      //      Policy.Modes.SRPT2D1,
-      //      Policy.Modes.eSRPT2D1,
-      //      Policy.Modes.hSRPT2D1,
-      //      Policy.Modes.SRPT2D2,
-      //      Policy.Modes.eSRPT2D2,
-      //      Policy.Modes.hSRPT2D2,
-      //      Policy.Modes.HRRN2D,
-      //      Policy.Modes.eHRRN2D,
-      //      Policy.Modes.hHRRN2D//,
-      //
-      //      Policy.Modes.PSJF3D,
-      //      Policy.Modes.ePSJF3D,
-      //      Policy.Modes.hPSJF3D,
-      //      Policy.Modes.SRPT3D1,
-      //      Policy.Modes.eSRPT3D1,
-      //      Policy.Modes.hSRPT3D1,
-      //      Policy.Modes.SRPT3D2,
-      //      Policy.Modes.eSRPT3D2,
-      //      Policy.Modes.hSRPT3D2//,
-      //      Policy.Modes.HRRN3D,
-      //      Policy.Modes.eHRRN3D,
-      //      Policy.Modes.hHRRN3D
-    )
+//      //      Policy.Modes.SRPT,
+//      //      Policy.Modes.eSRPT,
+//      //      Policy.Modes.hSRPT//,
+//      //      Policy.Modes.HRRN,
+//      //      Policy.Modes.eHRRN,
+//      //      Policy.Modes.hHRRN//,
+//      //
+//      //      Policy.Modes.PSJF2D,
+//      //      Policy.Modes.ePSJF2D,
+//      //      Policy.Modes.hPSJF2D,
+//      //      Policy.Modes.SRPT2D1,
+//      //      Policy.Modes.eSRPT2D1,
+//      //      Policy.Modes.hSRPT2D1,
+//      //      Policy.Modes.SRPT2D2,
+//      //      Policy.Modes.eSRPT2D2,
+//      //      Policy.Modes.hSRPT2D2,
+//      //      Policy.Modes.HRRN2D,
+//      //      Policy.Modes.eHRRN2D,
+//      //      Policy.Modes.hHRRN2D//,
+//      //
+//      //      Policy.Modes.PSJF3D,
+//      //      Policy.Modes.ePSJF3D,
+//      //      Policy.Modes.hPSJF3D,
+//      //      Policy.Modes.SRPT3D1,
+//      //      Policy.Modes.eSRPT3D1,
+//      //      Policy.Modes.hSRPT3D1,
+//      //      Policy.Modes.SRPT3D2,
+//      //      Policy.Modes.eSRPT3D2,
+//      //      Policy.Modes.hSRPT3D2//,
+//      //      Policy.Modes.HRRN3D,
+//      //      Policy.Modes.eHRRN3D,
+//      //      Policy.Modes.hHRRN3D
+//    )
 
     val formatter = new java.text.SimpleDateFormat("yyyy-MM-dd-HH-mm-ss")
     /**
@@ -247,6 +276,8 @@ object Simulation extends LazyLogging {
         })
     }).mkString("_") + "-%.0f".format(globalRunTime)
     System.setProperty("experiment.dir", outputDirName)
+    /* NO INFO LOGGING BEFORE THIS LINE DUE TO OUTPUT TO FILE IN EXPERIMENT.DIR*/
+    logger.info("Using system properties from config file: " + configFile)
     logger.info("outputDirName is " + outputDirName)
 
     logger.info("Generating Workloads...")
@@ -1513,19 +1544,19 @@ object Simulation extends LazyLogging {
     var numFinishedExps = 0
 
     if (numTotalExps < numThreads) {
-      logger.warn("The given number of threads is higher than the number of experiments to run. Adjusting it to avoid wasting resources.")
+      logger.warn("The given number of threads is higher (" + numThreads + ") than the number of experiments (" + numTotalExps +
+        ") to run. Adjusting it to avoid wasting resources.")
       numThreads = numTotalExps
     }
     val pool = java.util
       .concurrent
       .Executors
       .newFixedThreadPool(numThreads)
-//    Seed.set(randomSeed)
-    Seed.set(0)
+    Seed.set(randomSeed)
     logger.info(("Running %d experiments with the following options:\n" +
       "\t - threads:     %d\n" +
       "\t - random seed: %d\n").format(numTotalExps, numThreads, randomSeed))
-    var futures = allExperiments.map(pool.submit)
+    var futures: List[Future[Nothing]] = allExperiments.map(pool.submit)
     // Let go of pointers to Experiments because each Experiment will use
     // quite a lot of memory.
     allExperiments = Nil

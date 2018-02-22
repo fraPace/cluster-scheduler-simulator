@@ -1,0 +1,31 @@
+{
+    "name": "c-sched-sim",
+    "services": [
+        {
+            "command": "bash /mnt/workspace/cluster-scheduler-simulator/bin/launch.sh --config-file conf/seed0/pessimisticD-predictor-k0-beta20.properties",
+            "environment": [], 
+            "essential_count": 1, 
+            "image": "zapps/cluster-scheduler-simulator:4841", 
+            "monitor": true, 
+            "name": "simulator", 
+            "ports": [], 
+            "replicas": 1, 
+            "resources": {
+                "cores": {
+                    "max": 4, 
+                    "min": 4
+                }, 
+                "memory": {
+                    "max": 128849018880, 
+                    "min": 128849018880
+                }
+            }, 
+            "startup_order": 0, 
+            "total_count": 1, 
+            "volumes": []
+        }
+    ], 
+    "size": 1024, 
+    "version": 3, 
+    "will_end": true
+}

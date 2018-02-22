@@ -196,12 +196,4 @@ graph_experiment ${PROTO_LIST::-1}
 #echo Calling graph_experiment with ${PROTO_LIST}
 #graph_experiment ${PROTO_LIST::-1}
 
-# Parse Others
-#echo "capturing: ls ${input_dir}| grep protobuf | grep -v zoe"
-#ls ${input_dir} | grep protobuf | grep -v zoe
-#for curr_filename in `ls ${input_dir}|grep protobuf|grep -v zoe`; do
-#    echo Calling graph_experiment with ${curr_filename}
-#    graph_experiment ${curr_filename}
-#done
-
 
