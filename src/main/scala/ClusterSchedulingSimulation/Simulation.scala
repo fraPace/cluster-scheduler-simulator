@@ -1556,7 +1556,7 @@ object Simulation extends LazyLogging {
     logger.info(("Running %d experiments with the following options:\n" +
       "\t - threads:     %d\n" +
       "\t - random seed: %d\n").format(numTotalExps, numThreads, randomSeed))
-    var futures: List[Future[Nothing]] = allExperiments.map(pool.submit)
+    var futures = allExperiments.map(pool.submit)
     // Let go of pointers to Experiments because each Experiment will use
     // quite a lot of memory.
     allExperiments = Nil

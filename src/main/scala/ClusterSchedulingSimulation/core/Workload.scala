@@ -730,8 +730,7 @@ case class WorkloadDesc(
   assert(!assignmentPolicy.contains(" "), {
     "Assignment policies cannot have spaces in them."
   })
-  assert(prefillWorkloadGenerators.length ==
-    prefillWorkloadGenerators.map(_.workloadName).toSet.size)
+  assert(prefillWorkloadGenerators.lengthCompare(prefillWorkloadGenerators.map(_.workloadName).toSet.size) == 0)
 
   val workloads: ListBuffer[Workload] = ListBuffer[Workload]()
 
